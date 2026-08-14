@@ -44,6 +44,10 @@ Sub ProcessTest()
     Dim tempTs As String
     Dim avgOutCol As Long
     
+    Dim tsVal As Variant
+    Dim firstFormat As String
+    Dim isTimeFmt As Boolean
+    
     userStr = InputBox("Enter the averaging time window in seconds (e.g., 1 for a 1-second average)." & vbCrLf & vbCrLf & "Enter 0 to plot the raw high-frequency data.", "Averaging Increment", "1")
     If Trim(userStr) = "" Then Exit Sub
     If IsNumeric(userStr) Then
@@ -148,27 +152,49 @@ Sub ProcessTest()
         rowIdx = 0
         bStartRows(b) = outRow
 
+        firstFormat = wsSource.Cells(dataStartRow, blockStartCols(b)).NumberFormat
+        If InStr(firstFormat, ":") > 0 Then
+            isTimeFmt = True
+        Else
+            isTimeFmt = False
+        End If
+
         For i = 1 To nRows
-            tsText = Trim(CStr(srcData(i, 1)))
-            If tsText = "" Then Exit For
+            tsVal = srcData(i, 1)
+            If IsEmpty(tsVal) Or IsError(tsVal) Then Exit For
+            If VarType(tsVal) = vbString Then
+                If Trim(CStr(tsVal)) = "" Then Exit For
+            End If
 
             wVal = srcData(i, 2)
 
-            If InStr(tsText, ":") > 0 Then
-                tempTs = Replace(Replace(tsText, " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
-                splitArr = Split(tempTs, ":")
-                
-                If UBound(splitArr) = 2 Then
-                    elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
-                ElseIf UBound(splitArr) = 1 Then
-                    elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
+            If VarType(tsVal) = vbString Then
+                tempTs = Replace(Replace(Trim(CStr(tsVal)), " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
+                If InStr(tempTs, ":") > 0 Then
+                    splitArr = Split(tempTs, ":")
+                    If UBound(splitArr) = 2 Then
+                        elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
+                    ElseIf UBound(splitArr) = 1 Then
+                        elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
+                    Else
+                        elapsedSec = CDbl(tempTs)
+                    End If
                 Else
                     elapsedSec = CDbl(tempTs)
                 End If
+            ElseIf VarType(tsVal) = vbDate Then
+                elapsedSec = CDbl(tsVal) * 86400
+            ElseIf IsNumeric(tsVal) Then
+                If isTimeFmt Then
+                    elapsedSec = CDbl(tsVal) * 86400
+                Else
+                    elapsedSec = CDbl(tsVal)
+                End If
             Else
-                elapsedSec = CDbl(tsText)
+                elapsedSec = CDbl(tsVal)
             End If
 
+            tsText = CStr(tsVal)
             rowIdx = rowIdx + 1
             timeArr(rowIdx) = elapsedSec
             weightArr(rowIdx) = CDbl(wVal) * 0.00220462
