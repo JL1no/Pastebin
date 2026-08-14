@@ -20,6 +20,9 @@ Sub ProcessTest()
     Dim nRows As Long, rowIdx As Long
     Dim blockTimes() As Variant
     Dim blockWeights() As Variant
+    Dim bMaxWeight() As Double
+    Dim bStartRows() As Long
+    Dim bEndRows() As Long
     Dim timeArr() As Double
     Dim weightArr() As Double
     Dim distinctTests() As Long
@@ -34,6 +37,11 @@ Sub ProcessTest()
     
     Dim userStr As String
     Dim avgWindow As Double
+    Dim srcData As Variant
+    Dim masterData() As Variant
+    Dim totalPossibleRows As Long
+    Dim splitArr() As String
+    Dim avgOutCol As Long
     
     userStr = InputBox("Enter the averaging time window in seconds (e.g., 1 for a 1-second average)." & vbCrLf & vbCrLf & "Enter 0 to plot the raw high-frequency data.", "Averaging Increment", "1")
     If Trim(userStr) = "" Then Exit Sub
@@ -42,6 +50,10 @@ Sub ProcessTest()
     Else
         avgWindow = 0
     End If
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.EnableEvents = False
 
     Set wb = ThisWorkbook
     If ConfigSourceSheetName = "" Then
@@ -59,7 +71,7 @@ Sub ProcessTest()
     Next r
     If headerRow = 0 Then
         MsgBox "Could not find a 'Time Stamp' header row in the first 30 rows of """ & wsSource.Name & """.", vbExclamation
-        Exit Sub
+        GoTo CleanExit
     End If
     dataStartRow = headerRow + 1
 
@@ -88,13 +100,13 @@ Sub ProcessTest()
 
     If blockCount = 0 Then
         MsgBox "No 'Device & Test:' blocks found in row 1 of """ & wsSource.Name & """.", vbExclamation
-        Exit Sub
+        GoTo CleanExit
     End If
 
     lastRow = wsSource.Cells(wsSource.Rows.Count, blockStartCols(1)).End(xlUp).Row
     If lastRow < dataStartRow Then
         MsgBox "No data rows found below the header row.", vbExclamation
-        Exit Sub
+        GoTo CleanExit
     End If
 
     summaryName = Left(wsSource.Name & " - Summary", 31)
@@ -116,25 +128,34 @@ Sub ProcessTest()
     wsData.Range("A1:E1").Value = Array("Device", "Test Number", "Time Stamp", "Elapsed Seconds", "Weight (lbf)")
     wsData.Range("A1:E1").Font.Bold = True
     wsData.Range("A1:E1").Interior.Color = RGB(220, 230, 241)
+
+    totalPossibleRows = blockCount * (lastRow - dataStartRow + 1)
+    ReDim masterData(1 To totalPossibleRows, 1 To 5)
     outRow = 2
 
     ReDim blockTimes(1 To blockCount)
     ReDim blockWeights(1 To blockCount)
+    ReDim bMaxWeight(1 To blockCount)
+    ReDim bStartRows(1 To blockCount)
+    ReDim bEndRows(1 To blockCount)
 
     For b = 1 To blockCount
-        nRows = lastRow - dataStartRow + 1
+        srcData = wsSource.Range(wsSource.Cells(dataStartRow, blockStartCols(b)), wsSource.Cells(lastRow, blockStartCols(b) + 1)).Value
+        nRows = UBound(srcData, 1)
         ReDim timeArr(1 To nRows)
         ReDim weightArr(1 To nRows)
         rowIdx = 0
+        bStartRows(b) = outRow
 
-        For i = dataStartRow To lastRow
-            tsText = Trim(wsSource.Cells(i, blockStartCols(b)).Value)
+        For i = 1 To nRows
+            tsText = Trim(CStr(srcData(i, 1)))
             If tsText = "" Then Exit For
 
-            wVal = wsSource.Cells(i, blockStartCols(b) + 1).Value
-            
+            wVal = srcData(i, 2)
+
             If InStr(tsText, ":") > 0 Then
-                elapsedSec = CDbl(Split(tsText, ":")(0)) * 60 + CDbl(Split(tsText, ":")(1))
+                splitArr = Split(tsText, ":")
+                elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
             Else
                 elapsedSec = CDbl(tsText)
             End If
@@ -143,13 +164,20 @@ Sub ProcessTest()
             timeArr(rowIdx) = elapsedSec
             weightArr(rowIdx) = CDbl(wVal) * 0.00220462
 
-            wsData.Cells(outRow, 1).Value = deviceIDs(b)
-            wsData.Cells(outRow, 2).Value = testNumbers(b)
-            wsData.Cells(outRow, 3).Value = tsText
-            wsData.Cells(outRow, 4).Value = elapsedSec
-            wsData.Cells(outRow, 5).Value = weightArr(rowIdx)
+            If rowIdx = 1 Or weightArr(rowIdx) > bMaxWeight(b) Then
+                bMaxWeight(b) = weightArr(rowIdx)
+            End If
+
+            masterData(outRow - 1, 1) = deviceIDs(b)
+            masterData(outRow - 1, 2) = testNumbers(b)
+            masterData(outRow - 1, 3) = tsText
+            masterData(outRow - 1, 4) = elapsedSec
+            masterData(outRow - 1, 5) = weightArr(rowIdx)
+            
             outRow = outRow + 1
         Next i
+
+        bEndRows(b) = outRow - 1
 
         If rowIdx > 0 And rowIdx < nRows Then
             ReDim Preserve timeArr(1 To rowIdx)
@@ -159,6 +187,10 @@ Sub ProcessTest()
         blockTimes(b) = timeArr
         blockWeights(b) = weightArr
     Next b
+
+    If outRow > 2 Then
+        wsData.Range("A2").Resize(outRow - 2, 5).Value = masterData
+    End If
 
     wsData.Range("D2:D" & outRow - 1).NumberFormat = "0.000"
     wsData.Columns("A:E").AutoFit
@@ -187,7 +219,7 @@ Sub ProcessTest()
     For b = 1 To blockCount
         wsSummary.Cells(sumRow, 1).Value = deviceIDs(b)
         wsSummary.Cells(sumRow, 2).Value = testNumbers(b)
-        wsSummary.Cells(sumRow, 3).Value = Application.WorksheetFunction.Max(blockWeights(b))
+        wsSummary.Cells(sumRow, 3).Value = bMaxWeight(b)
         sumRow = sumRow + 1
     Next b
 
@@ -205,7 +237,7 @@ Sub ProcessTest()
                 Exit For
             End If
         Next k
-        if Not found Then
+        If Not found Then
             distinctCount = distinctCount + 1
             distinctTests(distinctCount) = testNumbers(b)
         End If
@@ -235,58 +267,60 @@ Sub ProcessTest()
                 ser.Name = deviceIDs(b)
                 
                 If avgWindow > 0 Then
-                    Dim pTimes() As Double
-                    Dim pWeights() As Double
-                    Dim pIdx As Long, j As Long
-                    Dim bStart As Double, bSum As Double
-                    Dim bCount As Long
+                    avgOutCol = wsData.Cells(1, wsData.Columns.Count).End(xlToLeft).Column + 2
+                    wsData.Cells(1, avgOutCol).Value = deviceIDs(b) & " Avg Time"
+                    wsData.Cells(1, avgOutCol + 1).Value = deviceIDs(b) & " Avg lbf"
+                    wsData.Cells(1, avgOutCol).Resize(1, 2).Font.Bold = True
 
-                    ReDim pTimes(1 To UBound(blockTimes(b)))
-                    ReDim pWeights(1 To UBound(blockWeights(b)))
+                    Dim bStart As Double, bSum As Double, bCountVal As Long
+                    Dim dataIdx As Long, pIdx As Long
+                    Dim outArr() As Variant
+                    ReDim outArr(1 To UBound(blockTimes(b)), 1 To 2)
+
                     pIdx = 0
-                    bStart = 0
                     bSum = 0
-                    bCount = 0
+                    bCountVal = 0
 
-                    For j = 1 To UBound(blockTimes(b))
-                        Dim tVal As Double: tVal = blockTimes(b)(j)
-                        Dim weight As Double: weight = blockWeights(b)(j)
+                    For dataIdx = 1 To UBound(blockTimes(b))
+                        Dim tVal As Double: tVal = blockTimes(b)(dataIdx)
+                        Dim weight As Double: weight = blockWeights(b)(dataIdx)
+
+                        If dataIdx = 1 Then
+                            bStart = Int(tVal / avgWindow) * avgWindow
+                        End If
 
                         If tVal < bStart + avgWindow Then
                             bSum = bSum + weight
-                            bCount = bCount + 1
+                            bCountVal = bCountVal + 1
                         Else
-                            If bCount > 0 Then
+                            If bCountVal > 0 Then
                                 pIdx = pIdx + 1
-                                pTimes(pIdx) = bStart + (avgWindow / 2)
-                                pWeights(pIdx) = bSum / bCount
+                                outArr(pIdx, 1) = bStart + (avgWindow / 2)
+                                outArr(pIdx, 2) = bSum / bCountVal
                             End If
-                            Do While tVal >= bStart + avgWindow
-                                bStart = bStart + avgWindow
-                            Loop
+                            bStart = Int(tVal / avgWindow) * avgWindow
                             bSum = weight
-                            bCount = 1
+                            bCountVal = 1
                         End If
-                    Next j
+                    Next dataIdx
                     
-                    If bCount > 0 Then
+                    If bCountVal > 0 Then
                         pIdx = pIdx + 1
-                        pTimes(pIdx) = bStart + (avgWindow / 2)
-                        pWeights(pIdx) = bSum / bCount
+                        outArr(pIdx, 1) = bStart + (avgWindow / 2)
+                        outArr(pIdx, 2) = bSum / bCountVal
                     End If
 
                     If pIdx > 0 Then
-                        ReDim Preserve pTimes(1 To pIdx)
-                        ReDim Preserve pWeights(1 To pIdx)
-                        ser.XValues = pTimes
-                        ser.Values = pWeights
+                        wsData.Cells(2, avgOutCol).Resize(pIdx, 2).Value = outArr
+                        ser.XValues = wsData.Range(wsData.Cells(2, avgOutCol), wsData.Cells(pIdx + 1, avgOutCol))
+                        ser.Values = wsData.Range(wsData.Cells(2, avgOutCol + 1), wsData.Cells(pIdx + 1, avgOutCol + 1))
                     Else
-                        ser.XValues = blockTimes(b)
-                        ser.Values = blockWeights(b)
+                        ser.XValues = wsData.Range(wsData.Cells(bStartRows(b), 4), wsData.Cells(bEndRows(b), 4))
+                        ser.Values = wsData.Range(wsData.Cells(bStartRows(b), 5), wsData.Cells(bEndRows(b), 5))
                     End If
                 Else
-                    ser.XValues = blockTimes(b)
-                    ser.Values = blockWeights(b)
+                    ser.XValues = wsData.Range(wsData.Cells(bStartRows(b), 4), wsData.Cells(bEndRows(b), 4))
+                    ser.Values = wsData.Range(wsData.Cells(bStartRows(b), 5), wsData.Cells(bEndRows(b), 5))
                 End If
                 
                 ser.MarkerSize = 4
@@ -305,5 +339,10 @@ Sub ProcessTest()
     MsgBox "Done." & vbCrLf & _
         "Summary + charts: """ & summaryName & """" & vbCrLf & _
         "Raw data: """ & dataName & """", vbInformation
+
+CleanExit:
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.EnableEvents = True
 
 End Sub
