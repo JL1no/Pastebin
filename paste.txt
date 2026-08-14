@@ -1,0 +1,227 @@
+Sub ProcessTest()
+    Dim userInput As String
+    Dim avgWindow As Double
+    Dim wsSource As Worksheet
+    Dim wsData As Worksheet
+    Dim wsSummary As Worksheet
+    Dim rCount As Long, cCount As Long, headerRow As Long, maxCol As Long
+    Dim blockCount As Long, bIndex As Long, iIndex As Long, lastRow As Long
+    Dim startCols() As Long
+    Dim devIDs() As String
+    Dim testNums() As Long
+    Dim rawVal As String, posTest As Long, tsText As String
+    Dim elapsedSec As Double, outRow As Long
+    Dim timeArr(), weightArr(), blockTimes(), blockWeights(), distTests() As Long
+    Dim distCount As Long, isFound As Boolean
+    Dim chrtObj As ChartObject, chrtSeries As Series
+    
+    userInput = InputBox("Avg window (s), 0 for raw", , "1")
+    If userInput = "" Then Exit Sub
+    avgWindow = Val(userInput)
+    Set wsSource = ActiveSheet
+    
+    For rCount = 1 To 30
+        If Trim(wsSource.Cells(rCount, 1).Value) = "Time Stamp" Then
+            headerRow = rCount
+            Exit For
+        End If
+    Next rCount
+    
+    If headerRow = 0 Then Exit Sub
+    
+    maxCol = wsSource.Cells(1, wsSource.Columns.Count).End(xlToLeft).Column
+    ReDim startCols(1 To maxCol)
+    ReDim devIDs(1 To maxCol)
+    ReDim testNums(1 To maxCol)
+    cCount = 1
+    
+    Do While cCount <= maxCol
+        If Trim(wsSource.Cells(1, cCount).Value) = "Device & Test:" Then
+            rawVal = Trim(wsSource.Cells(1, cCount + 1).Value)
+            posTest = InStrRev(rawVal, "_Test_")
+            If posTest > 0 Then
+                blockCount = blockCount + 1
+                startCols(blockCount) = cCount
+                devIDs(blockCount) = Left(rawVal, posTest - 1)
+                testNums(blockCount) = Val(Mid(rawVal, posTest + 6))
+            End If
+            cCount = cCount + 3
+        Else
+            cCount = cCount + 1
+        End If
+    Loop
+    
+    If blockCount = 0 Then Exit Sub
+    
+    lastRow = wsSource.Cells(wsSource.Rows.Count, startCols(1)).End(xlUp).Row
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    Sheets(wsSource.Name & " - Summary").Delete
+    Sheets(wsSource.Name & " - Data").Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+    
+    Set wsSummary = Sheets.Add(After:=Sheets(Sheets.Count))
+    wsSummary.Name = Left(wsSource.Name & " - Summary", 31)
+    
+    Set wsData = Sheets.Add(After:=Sheets(Sheets.Count))
+    wsData.Name = Left(wsSource.Name & " - Data", 31)
+    
+    wsData.Range("A1:E1").Value = Array("Device", "Test Number", "Time Stamp", "Elapsed Seconds", "Weight (lbf)")
+    wsData.Range("A1:E1").Font.Bold = True
+    wsData.Range("A1:E1").Interior.Color = 15853276
+    outRow = 2
+    
+    ReDim blockTimes(1 To blockCount)
+    ReDim blockWeights(1 To blockCount)
+    
+    For bIndex = 1 To blockCount
+        ReDim timeArr(1 To lastRow - headerRow)
+        ReDim weightArr(1 To lastRow - headerRow)
+        rCount = 0
+        For iIndex = headerRow + 1 To lastRow
+            tsText = Trim(wsSource.Cells(iIndex, startCols(bIndex)).Value)
+            If tsText = "" Then Exit For
+            
+            If InStr(tsText, ":") Then
+                elapsedSec = Val(Split(tsText, ":")(0)) * 60 + Val(Split(tsText, ":")(1))
+            Else
+                elapsedSec = Val(tsText)
+            End If
+            
+            rCount = rCount + 1
+            timeArr(rCount) = elapsedSec
+            weightArr(rCount) = wsSource.Cells(iIndex, startCols(bIndex) + 1).Value * 0.00220462
+            
+            wsData.Cells(outRow, 1).Resize(, 5).Value = Array(devIDs(bIndex), testNums(bIndex), tsText, elapsedSec, weightArr(rCount))
+            outRow = outRow + 1
+        Next iIndex
+        
+        If rCount > 0 And rCount < UBound(timeArr) Then
+            ReDim Preserve timeArr(1 To rCount)
+            ReDim Preserve weightArr(1 To rCount)
+        End If
+        blockTimes(bIndex) = timeArr
+        blockWeights(bIndex) = weightArr
+    Next bIndex
+    
+    wsData.Range("D2:D" & outRow).NumberFormat = "0.000"
+    wsData.Columns.AutoFit
+    wsData.Activate
+    wsData.Range("A2").Select
+    ActiveWindow.FreezePanes = True
+    
+    With wsSummary
+        .Range("A1").Value = "Test Summary - " & wsSource.Name
+        .Range("A1").Font.Bold = True
+        .Range("A1").Font.Size = 14
+        
+        .Range("A2").Value = "Avg Window (s):"
+        .Range("A2").Font.Italic = True
+        .Range("B2").Value = IIf(avgWindow = 0, "Raw Data", avgWindow)
+        .Range("B2").Font.Bold = True
+        .Range("B2").Interior.Color = 13431551
+        .Range("B2").Borders.LineStyle = 1
+        .Range("B2").HorizontalAlignment = xlCenter
+        
+        .Range("A4:C4").Value = Array("Device", "Test Number", "Max Weight (lbf)")
+        .Range("A4:C4").Font.Bold = True
+        .Range("A4:C4").Interior.Color = 15853276
+        
+        rCount = 5
+        For bIndex = 1 To blockCount
+            .Cells(rCount, 1).Resize(, 3).Value = Array(devIDs(bIndex), testNums(bIndex), WorksheetFunction.Max(blockWeights(bIndex)))
+            rCount = rCount + 1
+        Next bIndex
+        
+        .Range("C5:C" & rCount).NumberFormat = "0.00"
+        .Range("A4:C" & rCount - 1).Borders.LineStyle = 1
+        .Columns.AutoFit
+        
+        ReDim distTests(1 To blockCount)
+        For bIndex = 1 To blockCount
+            isFound = False
+            For cCount = 1 To distCount
+                If distTests(cCount) = testNums(bIndex) Then
+                    isFound = True
+                    Exit For
+                End If
+            Next cCount
+            If Not isFound Then
+                distCount = distCount + 1
+                distTests(distCount) = testNums(bIndex)
+            End If
+        Next bIndex
+        
+        For iIndex = 1 To distCount
+            Set chrtObj = .ChartObjects.Add(.Range("E1").Left + ((iIndex - 1) Mod 2) * 395, .Range("A1").Top + ((iIndex - 1) \ 2) * 265, 380, 250)
+            chrtObj.Chart.ChartType = xlXYScatter
+            chrtObj.Chart.HasTitle = True
+            chrtObj.Chart.ChartTitle.Text = "Test " & distTests(iIndex) & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
+            chrtObj.Chart.Legend.Position = xlLegendPositionBottom
+            
+            For bIndex = 1 To blockCount
+                If testNums(bIndex) = distTests(iIndex) Then
+                    Set chrtSeries = chrtObj.Chart.SeriesCollection.NewSeries
+                    chrtSeries.Name = devIDs(bIndex)
+                    
+                    If avgWindow > 0 Then
+                        Dim pTimes(), pWeights()
+                        Dim pIdx As Long, bStart As Double, bSum As Double, bCountVal As Long
+                        Dim dataIdx As Long
+                        
+                        ReDim pTimes(1 To UBound(blockTimes(bIndex)))
+                        ReDim pWeights(1 To UBound(blockWeights(bIndex)))
+                        pIdx = 0: bStart = 0: bSum = 0: bCountVal = 0
+                        
+                        For dataIdx = 1 To UBound(blockTimes(bIndex))
+                            If blockTimes(bIndex)(dataIdx) < bStart + avgWindow Then
+                                bSum = bSum + blockWeights(bIndex)(dataIdx)
+                                bCountVal = bCountVal + 1
+                            Else
+                                If bCountVal > 0 Then
+                                    pIdx = pIdx + 1
+                                    pTimes(pIdx) = bStart + (avgWindow / 2)
+                                    pWeights(pIdx) = bSum / bCountVal
+                                End If
+                                Do While blockTimes(bIndex)(dataIdx) >= bStart + avgWindow
+                                    bStart = bStart + avgWindow
+                                Loop
+                                bSum = blockWeights(bIndex)(dataIdx)
+                                bCountVal = 1
+                            End If
+                        Next dataIdx
+                        
+                        If bCountVal > 0 Then
+                            pIdx = pIdx + 1
+                            pTimes(pIdx) = bStart + (avgWindow / 2)
+                            pWeights(pIdx) = bSum / bCountVal
+                        End If
+                        
+                        If pIdx > 0 Then
+                            ReDim Preserve pTimes(1 To pIdx)
+                            ReDim Preserve pWeights(1 To pIdx)
+                            chrtSeries.XValues = pTimes
+                            chrtSeries.Values = pWeights
+                        Else
+                            chrtSeries.XValues = blockTimes(bIndex)
+                            chrtSeries.Values = blockWeights(bIndex)
+                        End If
+                    Else
+                        chrtSeries.XValues = blockTimes(bIndex)
+                        chrtSeries.Values = blockWeights(bIndex)
+                    End If
+                    chrtSeries.MarkerSize = 4
+                End If
+            Next bIndex
+            
+            chrtObj.Chart.Axes(xlCategory).HasTitle = True
+            chrtObj.Chart.Axes(xlCategory).AxisTitle.Text = "Elapsed Seconds"
+            chrtObj.Chart.Axes(xlValue).HasTitle = True
+            chrtObj.Chart.Axes(xlValue).AxisTitle.Text = "Weight (lbf)"
+        Next iIndex
+        
+        .Activate
+        .Range("A1").Select
+    End With
+End Sub
