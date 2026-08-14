@@ -148,7 +148,6 @@ Sub ProcessTest()
             outRow = outRow + 1
         Next i
 
-        ' Heuristic fix for Excel corrupting long times into Day/Minute fractions
         If rowIdx > 100 And timeArr(rowIdx) > 0 Then
             apparentFreq = rowIdx / timeArr(rowIdx)
             If apparentFreq > 100000 Then
@@ -188,7 +187,6 @@ Sub ProcessTest()
     wsSummary.Range("B2").Borders.LineStyle = xlContinuous
     wsSummary.Range("B2").HorizontalAlignment = xlCenter
 
-    ' Generates the "Update Charts" button dynamically
     Set btn = wsSummary.Buttons.Add(wsSummary.Range("D2").Left, wsSummary.Range("D2").Top - 2, 100, 22)
     btn.OnAction = "UpdateAverages"
     btn.Characters.Text = "Update Charts"
@@ -230,7 +228,6 @@ Sub ProcessTest()
     baseLeft = wsSummary.Cells(1, 5).Left
     baseTop = wsSummary.Cells(1, 1).Top
 
-    ' Builds completely empty chart shells (UpdateAverages will do the plotting)
     For t = 1 To distinctCount
         colIdx = (t - 1) Mod 2
         rowIdxGrid = (t - 1) \ 2
@@ -250,7 +247,6 @@ Sub ProcessTest()
 
     wsSummary.Range("A1").Select
     
-    ' Triggers the plot logic instantly
     Call UpdateAverages
 
 CleanExit:
@@ -264,6 +260,8 @@ End Sub
 ' INTERACTIVE MACRO: Runs when you click "Update Charts"
 ' ====================================================================
 Sub UpdateAverages()
+    On Error GoTo PlottingError
+
     Dim wsSum As Worksheet, wsDat As Worksheet
     Set wsSum = ActiveSheet
     
@@ -271,7 +269,7 @@ Sub UpdateAverages()
     
     On Error Resume Next
     Set wsDat = ThisWorkbook.Sheets(Replace(wsSum.Name, " - Summary", " - Data"))
-    On Error GoTo 0
+    On Error GoTo PlottingError
     If wsDat Is Nothing Then Exit Sub
     
     Dim avgWindow As Double
@@ -279,9 +277,6 @@ Sub UpdateAverages()
     
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
-    
-    ' Fail-safe to ensure screen updating always turns back on
-    On Error GoTo SafeExit
     
     wsDat.Range("G:Z").ClearContents
     
@@ -302,12 +297,10 @@ Sub UpdateAverages()
         testNum = Split(tName, " ")(1)
         chrtObj.Chart.ChartTitle.Text = "Test " & testNum & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
         
-        ' Delete old lines to prevent ghost data
         Do While chrtObj.Chart.SeriesCollection.Count > 0
             chrtObj.Chart.SeriesCollection(1).Delete
         Loop
         
-        ' Find unique devices safely
         Dim uDevs As Collection
         Set uDevs = New Collection
         Dim i As Long
@@ -317,7 +310,7 @@ Sub UpdateAverages()
                 uDevs.Add CStr(rawData(i, 1)), CStr(rawData(i, 1))
             End If
         Next i
-        On Error GoTo SafeExit
+        On Error GoTo PlottingError
         
         Dim devKey As Variant
         For Each devKey In uDevs
@@ -347,6 +340,7 @@ Sub UpdateAverages()
                 Next i
                 
                 Set ser = chrtObj.Chart.SeriesCollection.NewSeries
+                ser.ChartType = xlXYScatter ' Explicitly set this FIRST to avoid formatting bugs
                 ser.Name = dName
                 
                 If avgWindow > 0 Then
@@ -381,6 +375,7 @@ Sub UpdateAverages()
                     wsDat.Cells(1, outCol).Value = dName & " Time"
                     wsDat.Cells(1, outCol + 1).Value = dName & " lbf"
                     wsDat.Cells(2, outCol).Resize(pIdx, 2).Value = outData
+                    
                     ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(pIdx + 1, outCol))
                     ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(pIdx + 1, outCol + 1))
                     outCol = outCol + 2
@@ -394,14 +389,13 @@ Sub UpdateAverages()
                         rawOut(i, 2) = wArr(i)
                     Next i
                     wsDat.Cells(2, outCol).Resize(matchCount, 2).Value = rawOut
+                    
                     ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(matchCount + 1, outCol))
                     ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(matchCount + 1, outCol + 1))
                     outCol = outCol + 2
                 End If
                 
-                ser.ChartType = xlXYScatter
                 ser.MarkerStyle = xlMarkerStyleCircle
-                ser.Format.Line.Visible = 0 ' Using raw binary 0 fixes the msoFalse crash
                 ser.MarkerSize = 4
             End If
         Next devKey
@@ -410,4 +404,10 @@ Sub UpdateAverages()
 SafeExit:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Exit Sub
+    
+PlottingError:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "An error occurred while building the charts." & vbCrLf & "Error Code: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical, "Chart Builder Failed"
 End Sub
