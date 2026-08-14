@@ -41,6 +41,7 @@ Sub ProcessTest()
     Dim masterData() As Variant
     Dim totalPossibleRows As Long
     Dim splitArr() As String
+    Dim tempTs As String
     Dim avgOutCol As Long
     
     userStr = InputBox("Enter the averaging time window in seconds (e.g., 1 for a 1-second average)." & vbCrLf & vbCrLf & "Enter 0 to plot the raw high-frequency data.", "Averaging Increment", "1")
@@ -64,13 +65,13 @@ Sub ProcessTest()
 
     headerRow = 0
     For r = 1 To 30
-        If Trim(wsSource.Cells(r, 1).Value) = "Time Stamp" Then
+        If Trim(wsSource.Cells(r, 1).Value) = "Timestamp" Then
             headerRow = r
             Exit For
         End If
     Next r
     If headerRow = 0 Then
-        MsgBox "Could not find a 'Time Stamp' header row in the first 30 rows of """ & wsSource.Name & """.", vbExclamation
+        MsgBox "Could not find a 'Timestamp' header row in the first 30 rows of """ & wsSource.Name & """.", vbExclamation
         GoTo CleanExit
     End If
     dataStartRow = headerRow + 1
@@ -125,7 +126,7 @@ Sub ProcessTest()
     Set wsData = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
     wsData.Name = dataName
 
-    wsData.Range("A1:E1").Value = Array("Device", "Test Number", "Time Stamp", "Elapsed Seconds", "Weight (lbf)")
+    wsData.Range("A1:E1").Value = Array("Device", "Test Number", "Timestamp", "Elapsed Seconds", "Weight (lbf)")
     wsData.Range("A1:E1").Font.Bold = True
     wsData.Range("A1:E1").Interior.Color = RGB(220, 230, 241)
 
@@ -154,8 +155,16 @@ Sub ProcessTest()
             wVal = srcData(i, 2)
 
             If InStr(tsText, ":") > 0 Then
-                splitArr = Split(tsText, ":")
-                elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
+                tempTs = Replace(Replace(tsText, " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
+                splitArr = Split(tempTs, ":")
+                
+                If UBound(splitArr) = 2 Then
+                    elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
+                ElseIf UBound(splitArr) = 1 Then
+                    elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
+                Else
+                    elapsedSec = CDbl(tempTs)
+                End If
             Else
                 elapsedSec = CDbl(tsText)
             End If
