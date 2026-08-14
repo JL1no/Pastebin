@@ -2,59 +2,29 @@ Sub ProcessTest()
 
     Const ConfigSourceSheetName As String = ""
 
-    Dim wsSource As Worksheet
-    Dim wsData As Worksheet
-    Dim wsSummary As Worksheet
+    Dim wsSource As Worksheet, wsData As Worksheet, wsSummary As Worksheet
     Dim wb As Workbook
     Dim r As Long, c As Long, i As Long, b As Long, k As Long, t As Long
-    Dim headerRow As Long, dataStartRow As Long, lastRow As Long
-    Dim maxCol As Long, blockCount As Long
-    Dim blockStartCols() As Long
-    Dim deviceIDs() As String
-    Dim testNumbers() As Long
-    Dim rawVal As String, tsText As String
-    Dim posTest As Long
-    Dim wVal As Variant
-    Dim elapsedSec As Double
+    Dim headerRow As Long, dataStartRow As Long, lastRow As Long, maxCol As Long
+    Dim blockCount As Long
+    Dim blockStartCols() As Long, deviceIDs() As String, testNumbers() As Long
+    Dim rawVal As String, tsText As String, tempTs As String
+    Dim posTest As Long, wVal As Variant, elapsedSec As Double
     Dim outRow As Long, sumHeaderRow As Long, sumRow As Long
     Dim nRows As Long, rowIdx As Long
-    Dim blockTimes() As Variant
-    Dim blockWeights() As Variant
-    Dim bMaxWeight() As Double
-    Dim bStartRows() As Long
-    Dim bEndRows() As Long
-    Dim timeArr() As Double
-    Dim weightArr() As Double
-    Dim distinctTests() As Long
-    Dim distinctCount As Long
+    Dim bMaxWeight() As Double, bStartRows() As Long
+    Dim timeArr() As Double, weightArr() As Double
+    Dim distinctTests() As Long, distinctCount As Long
     Dim found As Boolean
-    Dim chtObj As ChartObject
-    Dim ser As Series
+    Dim chtObj As ChartObject, ser As Series
     Dim chartTop As Double, chartLeft As Double, chartWidth As Double, chartHeight As Double
     Dim gap As Double, baseTop As Double, baseLeft As Double
     Dim colIdx As Long, rowIdxGrid As Long
     Dim dataName As String, summaryName As String
-    
-    Dim userStr As String
-    Dim avgWindow As Double
-    Dim srcData As Variant
-    Dim masterData() As Variant
-    Dim totalPossibleRows As Long
-    Dim splitArr() As String
-    Dim tempTs As String
-    Dim avgOutCol As Long
-    
-    Dim tsVal As Variant
-    Dim firstFormat As String
-    Dim isTimeFmt As Boolean
-    
-    userStr = InputBox("Enter the averaging time window in seconds (e.g., 1 for a 1-second average)." & vbCrLf & vbCrLf & "Enter 0 to plot the raw high-frequency data.", "Averaging Increment", "1")
-    If Trim(userStr) = "" Then Exit Sub
-    If IsNumeric(userStr) Then
-        avgWindow = CDbl(userStr)
-    Else
-        avgWindow = 0
-    End If
+    Dim srcData As Variant, masterData() As Variant
+    Dim totalPossibleRows As Long, splitArr() As String
+    Dim apparentFreq As Double
+    Dim btn As Object
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -109,11 +79,6 @@ Sub ProcessTest()
     End If
 
     lastRow = wsSource.Cells(wsSource.Rows.Count, blockStartCols(1)).End(xlUp).Row
-    If lastRow < dataStartRow Then
-        MsgBox "No data rows found below the header row.", vbExclamation
-        GoTo CleanExit
-    End If
-
     summaryName = Left(wsSource.Name & " - Summary", 31)
     dataName = Left(wsSource.Name & " - Data", 31)
 
@@ -126,7 +91,6 @@ Sub ProcessTest()
 
     Set wsSummary = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
     wsSummary.Name = summaryName
-
     Set wsData = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
     wsData.Name = dataName
 
@@ -138,11 +102,8 @@ Sub ProcessTest()
     ReDim masterData(1 To totalPossibleRows, 1 To 5)
     outRow = 2
 
-    ReDim blockTimes(1 To blockCount)
-    ReDim blockWeights(1 To blockCount)
     ReDim bMaxWeight(1 To blockCount)
     ReDim bStartRows(1 To blockCount)
-    ReDim bEndRows(1 To blockCount)
 
     For b = 1 To blockCount
         srcData = wsSource.Range(wsSource.Cells(dataStartRow, blockStartCols(b)), wsSource.Cells(lastRow, blockStartCols(b) + 1)).Value
@@ -152,49 +113,25 @@ Sub ProcessTest()
         rowIdx = 0
         bStartRows(b) = outRow
 
-        firstFormat = wsSource.Cells(dataStartRow, blockStartCols(b)).NumberFormat
-        If InStr(firstFormat, ":") > 0 Then
-            isTimeFmt = True
-        Else
-            isTimeFmt = False
-        End If
-
         For i = 1 To nRows
-            tsVal = srcData(i, 1)
-            If IsEmpty(tsVal) Or IsError(tsVal) Then Exit For
-            If VarType(tsVal) = vbString Then
-                If Trim(CStr(tsVal)) = "" Then Exit For
-            End If
-
+            tsText = Trim(CStr(srcData(i, 1)))
+            If tsText = "" Then Exit For
             wVal = srcData(i, 2)
 
-            If VarType(tsVal) = vbString Then
-                tempTs = Replace(Replace(Trim(CStr(tsVal)), " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
-                If InStr(tempTs, ":") > 0 Then
-                    splitArr = Split(tempTs, ":")
-                    If UBound(splitArr) = 2 Then
-                        elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
-                    ElseIf UBound(splitArr) = 1 Then
-                        elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
-                    Else
-                        elapsedSec = CDbl(tempTs)
-                    End If
+            If InStr(tsText, ":") > 0 Then
+                tempTs = Replace(Replace(tsText, " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
+                splitArr = Split(tempTs, ":")
+                If UBound(splitArr) = 2 Then
+                    elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
+                ElseIf UBound(splitArr) = 1 Then
+                    elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
                 Else
                     elapsedSec = CDbl(tempTs)
                 End If
-            ElseIf VarType(tsVal) = vbDate Then
-                elapsedSec = CDbl(tsVal) * 86400
-            ElseIf IsNumeric(tsVal) Then
-                If isTimeFmt Then
-                    elapsedSec = CDbl(tsVal) * 86400
-                Else
-                    elapsedSec = CDbl(tsVal)
-                End If
             Else
-                elapsedSec = CDbl(tsVal)
+                elapsedSec = CDbl(tsText)
             End If
 
-            tsText = CStr(tsVal)
             rowIdx = rowIdx + 1
             timeArr(rowIdx) = elapsedSec
             weightArr(rowIdx) = CDbl(wVal) * 0.00220462
@@ -208,19 +145,26 @@ Sub ProcessTest()
             masterData(outRow - 1, 3) = tsText
             masterData(outRow - 1, 4) = elapsedSec
             masterData(outRow - 1, 5) = weightArr(rowIdx)
-            
             outRow = outRow + 1
         Next i
 
-        bEndRows(b) = outRow - 1
-
-        If rowIdx > 0 And rowIdx < nRows Then
-            ReDim Preserve timeArr(1 To rowIdx)
-            ReDim Preserve weightArr(1 To rowIdx)
+        ' --- THE HEURISTIC MATH FIX ---
+        ' If Excel hid the time as a fraction, the apparent frequency will be physically impossible (e.g., millions of Hz).
+        ' This dynamically catches fraction bugs and multiplies them into true seconds.
+        If rowIdx > 100 And timeArr(rowIdx) > 0 Then
+            apparentFreq = rowIdx / timeArr(rowIdx)
+            If apparentFreq > 100000 Then ' Corrupted into Days
+                For i = 1 To rowIdx
+                    timeArr(i) = timeArr(i) * 86400
+                    masterData(bStartRows(b) + i - 2, 4) = timeArr(i)
+                Next i
+            ElseIf apparentFreq > 1500 And apparentFreq < 100000 Then ' Corrupted into Minutes
+                For i = 1 To rowIdx
+                    timeArr(i) = timeArr(i) * 60
+                    masterData(bStartRows(b) + i - 2, 4) = timeArr(i)
+                Next i
+            End If
         End If
-
-        blockTimes(b) = timeArr
-        blockWeights(b) = weightArr
     Next b
 
     If outRow > 2 Then
@@ -233,17 +177,24 @@ Sub ProcessTest()
     wsData.Range("A2").Select
     ActiveWindow.FreezePanes = True
 
+    wsSummary.Activate
     wsSummary.Range("A1").Value = "Test Summary - " & wsSource.Name
     wsSummary.Range("A1").Font.Bold = True
     wsSummary.Range("A1").Font.Size = 14
     
     wsSummary.Range("A2").Value = "Averaging Window (s):"
     wsSummary.Range("A2").Font.Italic = True
-    wsSummary.Range("B2").Value = IIf(avgWindow = 0, "Raw Data", avgWindow)
+    wsSummary.Range("B2").Value = 0 ' Default to raw 
     wsSummary.Range("B2").Font.Bold = True
     wsSummary.Range("B2").Interior.Color = RGB(255, 242, 204)
     wsSummary.Range("B2").Borders.LineStyle = xlContinuous
     wsSummary.Range("B2").HorizontalAlignment = xlCenter
+
+    ' Create the Interactive Button
+    Set btn = wsSummary.Buttons.Add(wsSummary.Range("D2").Left, wsSummary.Range("D2").Top - 2, 100, 22)
+    btn.OnAction = "UpdateAverages"
+    btn.Characters.Text = "Update Charts"
+    btn.Font.Bold = True
 
     sumHeaderRow = 4
     wsSummary.Cells(sumHeaderRow, 1).Resize(1, 3).Value = Array("Device", "Test Number", "Max Weight (lbf)")
@@ -267,10 +218,7 @@ Sub ProcessTest()
     For b = 1 To blockCount
         found = False
         For k = 1 To distinctCount
-            If distinctTests(k) = testNumbers(b) Then
-                found = True
-                Exit For
-            End If
+            If distinctTests(k) = testNumbers(b) Then found = True: Exit For
         Next k
         If Not found Then
             distinctCount = distinctCount + 1
@@ -284,6 +232,7 @@ Sub ProcessTest()
     baseLeft = wsSummary.Cells(1, 5).Left
     baseTop = wsSummary.Cells(1, 1).Top
 
+    ' Build blank shells for the charts. The Update macro will fill them.
     For t = 1 To distinctCount
         colIdx = (t - 1) Mod 2
         rowIdxGrid = (t - 1) \ 2
@@ -293,91 +242,155 @@ Sub ProcessTest()
         Set chtObj = wsSummary.ChartObjects.Add(Left:=chartLeft, Top:=chartTop, Width:=chartWidth, Height:=chartHeight)
         chtObj.chart.ChartType = xlXYScatter
         chtObj.chart.HasTitle = True
-        chtObj.chart.ChartTitle.Text = "Test " & distinctTests(t) & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
+        chtObj.chart.ChartTitle.Text = "Test " & distinctTests(t)
         chtObj.chart.Legend.Position = xlLegendPositionBottom
+        chtObj.chart.Axes(xlCategory).HasTitle = True
+        chtObj.chart.Axes(xlCategory).AxisTitle.Text = "Elapsed Seconds"
+        chtObj.chart.Axes(xlValue).HasTitle = True
+        chtObj.chart.Axes(xlValue).AxisTitle.Text = "Weight (lbf)"
 
         For b = 1 To blockCount
             If testNumbers(b) = distinctTests(t) Then
                 Set ser = chtObj.chart.SeriesCollection.NewSeries
                 ser.Name = deviceIDs(b)
-                
-                If avgWindow > 0 Then
-                    avgOutCol = wsData.Cells(1, wsData.Columns.Count).End(xlToLeft).Column + 2
-                    wsData.Cells(1, avgOutCol).Value = deviceIDs(b) & " Avg Time"
-                    wsData.Cells(1, avgOutCol + 1).Value = deviceIDs(b) & " Avg lbf"
-                    wsData.Cells(1, avgOutCol).Resize(1, 2).Font.Bold = True
-
-                    Dim bStart As Double, bSum As Double, bCountVal As Long
-                    Dim dataIdx As Long, pIdx As Long
-                    Dim outArr() As Variant
-                    ReDim outArr(1 To UBound(blockTimes(b)), 1 To 2)
-
-                    pIdx = 0
-                    bSum = 0
-                    bCountVal = 0
-
-                    For dataIdx = 1 To UBound(blockTimes(b))
-                        Dim tVal As Double: tVal = blockTimes(b)(dataIdx)
-                        Dim weight As Double: weight = blockWeights(b)(dataIdx)
-
-                        If dataIdx = 1 Then
-                            bStart = Int(tVal / avgWindow) * avgWindow
-                        End If
-
-                        If tVal < bStart + avgWindow Then
-                            bSum = bSum + weight
-                            bCountVal = bCountVal + 1
-                        Else
-                            If bCountVal > 0 Then
-                                pIdx = pIdx + 1
-                                outArr(pIdx, 1) = bStart + (avgWindow / 2)
-                                outArr(pIdx, 2) = bSum / bCountVal
-                            End If
-                            bStart = Int(tVal / avgWindow) * avgWindow
-                            bSum = weight
-                            bCountVal = 1
-                        End If
-                    Next dataIdx
-                    
-                    If bCountVal > 0 Then
-                        pIdx = pIdx + 1
-                        outArr(pIdx, 1) = bStart + (avgWindow / 2)
-                        outArr(pIdx, 2) = bSum / bCountVal
-                    End If
-
-                    If pIdx > 0 Then
-                        wsData.Cells(2, avgOutCol).Resize(pIdx, 2).Value = outArr
-                        ser.XValues = wsData.Range(wsData.Cells(2, avgOutCol), wsData.Cells(pIdx + 1, avgOutCol))
-                        ser.Values = wsData.Range(wsData.Cells(2, avgOutCol + 1), wsData.Cells(pIdx + 1, avgOutCol + 1))
-                    Else
-                        ser.XValues = wsData.Range(wsData.Cells(bStartRows(b), 4), wsData.Cells(bEndRows(b), 4))
-                        ser.Values = wsData.Range(wsData.Cells(bStartRows(b), 5), wsData.Cells(bEndRows(b), 5))
-                    End If
-                Else
-                    ser.XValues = wsData.Range(wsData.Cells(bStartRows(b), 4), wsData.Cells(bEndRows(b), 4))
-                    ser.Values = wsData.Range(wsData.Cells(bStartRows(b), 5), wsData.Cells(bEndRows(b), 5))
-                End If
-                
-                ser.MarkerSize = 4
             End If
         Next b
-
-        chtObj.chart.Axes(xlCategory).HasTitle = True
-        chtObj.chart.Axes(xlCategory).AxisTitle.Text = "Elapsed Seconds"
-        chtObj.chart.Axes(xlValue).HasTitle = True
-        chtObj.chart.Axes(xlValue).AxisTitle.Text = "Weight (lbf)"
     Next t
 
-    wsSummary.Activate
     wsSummary.Range("A1").Select
-
-    MsgBox "Done." & vbCrLf & _
-        "Summary + charts: """ & summaryName & """" & vbCrLf & _
-        "Raw data: """ & dataName & """", vbInformation
+    
+    ' Call the second macro to populate the charts immediately
+    Call UpdateAverages
 
 CleanExit:
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
     Application.EnableEvents = True
+End Sub
 
+
+' ====================================================================
+' INTERACTIVE MACRO: This runs whenever you click the "Update Charts" button
+' ====================================================================
+Sub UpdateAverages()
+    Dim wsSum As Worksheet, wsDat As Worksheet
+    Set wsSum = ActiveSheet
+    
+    If InStr(wsSum.Name, " - Summary") = 0 Then Exit Sub
+    
+    On Error Resume Next
+    Set wsDat = ThisWorkbook.Sheets(Replace(wsSum.Name, " - Summary", " - Data"))
+    On Error GoTo 0
+    If wsDat Is Nothing Then Exit Sub
+    
+    Dim avgWindow As Double
+    avgWindow = Val(wsSum.Range("B2").Value)
+    
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    
+    wsDat.Range("G:Z").ClearContents
+    
+    Dim lastR As Long
+    lastR = wsDat.Cells(wsDat.Rows.Count, 1).End(xlUp).Row
+    Dim rawData As Variant
+    rawData = wsDat.Range("A1:E" & lastR).Value
+    
+    Dim chrtObj As ChartObject, ser As Series
+    Dim tName As String, testNum As String, dName As String
+    Dim outCol As Long
+    outCol = 7
+    
+    For Each chrtObj In wsSum.ChartObjects
+        tName = chrtObj.Chart.ChartTitle.Text
+        testNum = Split(tName, " ")(1)
+        chrtObj.Chart.ChartTitle.Text = "Test " & testNum & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
+        
+        For Each ser In chrtObj.Chart.SeriesCollection
+            dName = ser.Name
+            
+            Dim i As Long, matchCount As Long
+            matchCount = 0
+            For i = 2 To lastR
+                If CStr(rawData(i, 2)) = testNum And CStr(rawData(i, 1)) = dName Then
+                    matchCount = matchCount + 1
+                End If
+            Next i
+            
+            If matchCount > 0 Then
+                Dim tArr() As Double, wArr() As Double
+                ReDim tArr(1 To matchCount)
+                ReDim wArr(1 To matchCount)
+                Dim idx As Long
+                idx = 0
+                
+                For i = 2 To lastR
+                    If CStr(rawData(i, 2)) = testNum And CStr(rawData(i, 1)) = dName Then
+                        idx = idx + 1
+                        tArr(idx) = CDbl(rawData(i, 4))
+                        wArr(idx) = CDbl(rawData(i, 5))
+                    End If
+                Next i
+                
+                If avgWindow > 0 Then
+                    Dim outData() As Variant
+                    ReDim outData(1 To matchCount, 1 To 2)
+                    Dim pIdx As Long, countW As Long, sumW As Double
+                    Dim binStart As Double
+                    pIdx = 0: countW = 0: sumW = 0
+                    binStart = Int(tArr(1) / avgWindow) * avgWindow
+                    
+                    For i = 1 To matchCount
+                        If tArr(i) >= binStart + avgWindow Then
+                            If countW > 0 Then
+                                pIdx = pIdx + 1
+                                outData(pIdx, 1) = binStart + (avgWindow / 2)
+                                outData(pIdx, 2) = sumW / countW
+                            End If
+                            binStart = Int(tArr(i) / avgWindow) * avgWindow
+                            sumW = 0
+                            countW = 0
+                        End If
+                        sumW = sumW + wArr(i)
+                        countW = countW + 1
+                    Next i
+                    
+                    If countW > 0 Then
+                        pIdx = pIdx + 1
+                        outData(pIdx, 1) = binStart + (avgWindow / 2)
+                        outData(pIdx, 2) = sumW / countW
+                    End If
+                    
+                    wsDat.Cells(1, outCol).Value = dName & " Time"
+                    wsDat.Cells(1, outCol + 1).Value = dName & " lbf"
+                    wsDat.Cells(2, outCol).Resize(pIdx, 2).Value = outData
+                    ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(pIdx + 1, outCol))
+                    ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(pIdx + 1, outCol + 1))
+                    outCol = outCol + 2
+                Else
+                    wsDat.Cells(1, outCol).Value = dName & " Time"
+                    wsDat.Cells(1, outCol + 1).Value = dName & " lbf"
+                    Dim rawOut() As Variant
+                    ReDim rawOut(1 To matchCount, 1 To 2)
+                    For i = 1 To matchCount
+                        rawOut(i, 1) = tArr(i)
+                        rawOut(i, 2) = wArr(i)
+                    Next i
+                    wsDat.Cells(2, outCol).Resize(matchCount, 2).Value = rawOut
+                    ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(matchCount + 1, outCol))
+                    ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(matchCount + 1, outCol + 1))
+                    outCol = outCol + 2
+                End If
+                
+                ' Forces the chart to use simple points (circles) with no lines
+                ser.ChartType = xlXYScatter
+                ser.MarkerStyle = xlMarkerStyleCircle
+                ser.Format.Line.Visible = msoFalse
+                ser.MarkerSize = 4
+            End If
+        Next ser
+    Next chrtObj
+    
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
 End Sub
