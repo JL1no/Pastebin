@@ -16,7 +16,7 @@ Sub ProcessTest()
     Dim timeArr() As Double, weightArr() As Double
     Dim distinctTests() As Long, distinctCount As Long
     Dim found As Boolean
-    Dim chtObj As ChartObject, ser As Series
+    Dim chtObj As ChartObject
     Dim chartTop As Double, chartLeft As Double, chartWidth As Double, chartHeight As Double
     Dim gap As Double, baseTop As Double, baseLeft As Double
     Dim colIdx As Long, rowIdxGrid As Long
@@ -148,17 +148,15 @@ Sub ProcessTest()
             outRow = outRow + 1
         Next i
 
-        ' --- THE HEURISTIC MATH FIX ---
-        ' If Excel hid the time as a fraction, the apparent frequency will be physically impossible (e.g., millions of Hz).
-        ' This dynamically catches fraction bugs and multiplies them into true seconds.
+        ' Heuristic fix for Excel corrupting long times into Day/Minute fractions
         If rowIdx > 100 And timeArr(rowIdx) > 0 Then
             apparentFreq = rowIdx / timeArr(rowIdx)
-            If apparentFreq > 100000 Then ' Corrupted into Days
+            If apparentFreq > 100000 Then
                 For i = 1 To rowIdx
                     timeArr(i) = timeArr(i) * 86400
                     masterData(bStartRows(b) + i - 2, 4) = timeArr(i)
                 Next i
-            ElseIf apparentFreq > 1500 And apparentFreq < 100000 Then ' Corrupted into Minutes
+            ElseIf apparentFreq > 1500 And apparentFreq < 100000 Then
                 For i = 1 To rowIdx
                     timeArr(i) = timeArr(i) * 60
                     masterData(bStartRows(b) + i - 2, 4) = timeArr(i)
@@ -184,13 +182,13 @@ Sub ProcessTest()
     
     wsSummary.Range("A2").Value = "Averaging Window (s):"
     wsSummary.Range("A2").Font.Italic = True
-    wsSummary.Range("B2").Value = 0 ' Default to raw 
+    wsSummary.Range("B2").Value = 0
     wsSummary.Range("B2").Font.Bold = True
     wsSummary.Range("B2").Interior.Color = RGB(255, 242, 204)
     wsSummary.Range("B2").Borders.LineStyle = xlContinuous
     wsSummary.Range("B2").HorizontalAlignment = xlCenter
 
-    ' Create the Interactive Button
+    ' Generates the "Update Charts" button dynamically
     Set btn = wsSummary.Buttons.Add(wsSummary.Range("D2").Left, wsSummary.Range("D2").Top - 2, 100, 22)
     btn.OnAction = "UpdateAverages"
     btn.Characters.Text = "Update Charts"
@@ -232,7 +230,7 @@ Sub ProcessTest()
     baseLeft = wsSummary.Cells(1, 5).Left
     baseTop = wsSummary.Cells(1, 1).Top
 
-    ' Build blank shells for the charts. The Update macro will fill them.
+    ' Builds completely empty chart shells (UpdateAverages will do the plotting)
     For t = 1 To distinctCount
         colIdx = (t - 1) Mod 2
         rowIdxGrid = (t - 1) \ 2
@@ -248,18 +246,11 @@ Sub ProcessTest()
         chtObj.chart.Axes(xlCategory).AxisTitle.Text = "Elapsed Seconds"
         chtObj.chart.Axes(xlValue).HasTitle = True
         chtObj.chart.Axes(xlValue).AxisTitle.Text = "Weight (lbf)"
-
-        For b = 1 To blockCount
-            If testNumbers(b) = distinctTests(t) Then
-                Set ser = chtObj.chart.SeriesCollection.NewSeries
-                ser.Name = deviceIDs(b)
-            End If
-        Next b
     Next t
 
     wsSummary.Range("A1").Select
     
-    ' Call the second macro to populate the charts immediately
+    ' Triggers the plot logic instantly
     Call UpdateAverages
 
 CleanExit:
@@ -270,7 +261,7 @@ End Sub
 
 
 ' ====================================================================
-' INTERACTIVE MACRO: This runs whenever you click the "Update Charts" button
+' INTERACTIVE MACRO: Runs when you click "Update Charts"
 ' ====================================================================
 Sub UpdateAverages()
     Dim wsSum As Worksheet, wsDat As Worksheet
@@ -289,10 +280,15 @@ Sub UpdateAverages()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     
+    ' Fail-safe to ensure screen updating always turns back on
+    On Error GoTo SafeExit
+    
     wsDat.Range("G:Z").ClearContents
     
     Dim lastR As Long
     lastR = wsDat.Cells(wsDat.Rows.Count, 1).End(xlUp).Row
+    If lastR < 2 Then GoTo SafeExit
+    
     Dim rawData As Variant
     rawData = wsDat.Range("A1:E" & lastR).Value
     
@@ -306,10 +302,28 @@ Sub UpdateAverages()
         testNum = Split(tName, " ")(1)
         chrtObj.Chart.ChartTitle.Text = "Test " & testNum & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
         
-        For Each ser In chrtObj.Chart.SeriesCollection
-            dName = ser.Name
+        ' Delete old lines to prevent ghost data
+        Do While chrtObj.Chart.SeriesCollection.Count > 0
+            chrtObj.Chart.SeriesCollection(1).Delete
+        Loop
+        
+        ' Find unique devices safely
+        Dim uDevs As Collection
+        Set uDevs = New Collection
+        Dim i As Long
+        On Error Resume Next
+        For i = 2 To lastR
+            If CStr(rawData(i, 2)) = testNum Then
+                uDevs.Add CStr(rawData(i, 1)), CStr(rawData(i, 1))
+            End If
+        Next i
+        On Error GoTo SafeExit
+        
+        Dim devKey As Variant
+        For Each devKey In uDevs
+            dName = CStr(devKey)
             
-            Dim i As Long, matchCount As Long
+            Dim matchCount As Long
             matchCount = 0
             For i = 2 To lastR
                 If CStr(rawData(i, 2)) = testNum And CStr(rawData(i, 1)) = dName Then
@@ -331,6 +345,9 @@ Sub UpdateAverages()
                         wArr(idx) = CDbl(rawData(i, 5))
                     End If
                 Next i
+                
+                Set ser = chrtObj.Chart.SeriesCollection.NewSeries
+                ser.Name = dName
                 
                 If avgWindow > 0 Then
                     Dim outData() As Variant
@@ -382,15 +399,15 @@ Sub UpdateAverages()
                     outCol = outCol + 2
                 End If
                 
-                ' Forces the chart to use simple points (circles) with no lines
                 ser.ChartType = xlXYScatter
                 ser.MarkerStyle = xlMarkerStyleCircle
-                ser.Format.Line.Visible = msoFalse
+                ser.Format.Line.Visible = 0 ' Using raw binary 0 fixes the msoFalse crash
                 ser.MarkerSize = 4
             End If
-        Next ser
+        Next devKey
     Next chrtObj
     
+SafeExit:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 End Sub
