@@ -8,7 +8,7 @@ Sub ProcessTest()
     Dim headerRow As Long, dataStartRow As Long, lastRow As Long, maxCol As Long
     Dim blockCount As Long
     Dim blockStartCols() As Long, deviceIDs() As String, testNumbers() As Long
-    Dim rawVal As String, tsText As String, tempTs As String
+    Dim rawVal As String, tsText As String
     Dim posTest As Long, wVal As Variant, elapsedSec As Double
     Dim outRow As Long, sumHeaderRow As Long, sumRow As Long
     Dim nRows As Long, rowIdx As Long
@@ -23,9 +23,11 @@ Sub ProcessTest()
     Dim dataName As String, summaryName As String
     Dim srcData As Variant, masterData() As Variant
     Dim totalPossibleRows As Long, splitArr() As String
-    Dim apparentFreq As Double
     Dim btn As Object
+    
     Dim tsVal As Variant
+    Dim firstFmt As String, isTimeFmt As Boolean
+    Dim firstTime As Double, isFirst As Boolean, rawSec As Double
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -113,6 +115,10 @@ Sub ProcessTest()
         ReDim weightArr(1 To nRows)
         rowIdx = 0
         bStartRows(b) = outRow
+        
+        isFirst = True
+        firstFmt = wsSource.Cells(dataStartRow, blockStartCols(b)).NumberFormat
+        isTimeFmt = (InStr(firstFmt, ":") > 0)
 
         For i = 1 To nRows
             tsVal = srcData(i, 1)
@@ -122,23 +128,32 @@ Sub ProcessTest()
             If tsText = "" Then Exit For
             wVal = srcData(i, 2)
 
-            If VarType(tsVal) = vbString Then
-                tempTs = Replace(Replace(tsText, " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
-                If InStr(tempTs, ":") > 0 Then
-                    splitArr = Split(tempTs, ":")
+            ' Forces Excel formats into standard numerical seconds
+            If isTimeFmt And VarType(tsVal) = vbDouble Then
+                rawSec = tsVal * 86400
+            Else
+                tsText = Replace(Replace(tsText, " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
+                If InStr(tsText, ":") > 0 Then
+                    splitArr = Split(tsText, ":")
                     If UBound(splitArr) = 2 Then
-                        elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
+                        rawSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
                     ElseIf UBound(splitArr) = 1 Then
-                        elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
+                        rawSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
                     Else
-                        elapsedSec = CDbl(tempTs)
+                        rawSec = CDbl(tsText)
                     End If
                 Else
-                    elapsedSec = CDbl(tempTs)
+                    rawSec = CDbl(tsText)
                 End If
-            Else
-                elapsedSec = CDbl(tsVal)
             End If
+
+            ' Zeros out the time so tests strictly start at 0 elapsed seconds
+            If isFirst Then
+                firstTime = rawSec
+                isFirst = False
+            End If
+            
+            elapsedSec = rawSec - firstTime
 
             rowIdx = rowIdx + 1
             timeArr(rowIdx) = elapsedSec
@@ -155,21 +170,6 @@ Sub ProcessTest()
             masterData(outRow - 1, 5) = weightArr(rowIdx)
             outRow = outRow + 1
         Next i
-
-        If rowIdx > 100 And timeArr(rowIdx) > 0 Then
-            apparentFreq = rowIdx / timeArr(rowIdx)
-            If apparentFreq > 100000 Then
-                For i = 1 To rowIdx
-                    timeArr(i) = timeArr(i) * 86400
-                    masterData(bStartRows(b) + i - 2, 4) = timeArr(i)
-                Next i
-            ElseIf apparentFreq > 1500 And apparentFreq < 100000 Then
-                For i = 1 To rowIdx
-                    timeArr(i) = timeArr(i) * 60
-                    masterData(bStartRows(b) + i - 2, 4) = timeArr(i)
-                Next i
-            End If
-        End If
     Next b
 
     If outRow > 2 Then
@@ -187,7 +187,7 @@ Sub ProcessTest()
     wsSummary.Range("A1").Font.Bold = True
     wsSummary.Range("A1").Font.Size = 14
     
-    wsSummary.Range("A2").Value = "Averaging Window (s):"
+    wsSummary.Range("A2").Value = "Rolling Avg Window (s):"
     wsSummary.Range("A2").Font.Italic = True
     wsSummary.Range("B2").Value = 0
     wsSummary.Range("B2").Font.Bold = True
@@ -254,7 +254,6 @@ Sub ProcessTest()
     Next t
 
     wsSummary.Range("A1").Select
-    
     Call UpdateAverages
 
 CleanExit:
@@ -344,58 +343,51 @@ Sub UpdateAverages()
                 Set ser = chrtObj.Chart.SeriesCollection.NewSeries
                 ser.Name = dName
                 
+                Dim outData() As Variant
+                ReDim outData(1 To matchCount, 1 To 2)
+                
+                ' === THE TRUE MOVING AVERAGE FILTER ===
                 If avgWindow > 0 Then
-                    Dim outData() As Variant
-                    ReDim outData(1 To matchCount, 1 To 2)
-                    Dim pIdx As Long, countW As Long, sumW As Double
-                    Dim binStart As Double
-                    pIdx = 0: countW = 0: sumW = 0
+                    Dim headIdx As Long, tailIdx As Long
+                    Dim rollingSum As Double
+                    Dim rollingCount As Long
                     
-                    binStart = Int(tArr(1) / avgWindow) * avgWindow
+                    tailIdx = 1
+                    rollingSum = 0
                     
-                    For i = 1 To matchCount
-                        If tArr(i) >= binStart + avgWindow Then
-                            If countW > 0 Then
-                                pIdx = pIdx + 1
-                                outData(pIdx, 1) = binStart + avgWindow
-                                outData(pIdx, 2) = sumW / countW
-                            End If
-                            binStart = Int(tArr(i) / avgWindow) * avgWindow
-                            sumW = 0
-                            countW = 0
+                    For headIdx = 1 To matchCount
+                        rollingSum = rollingSum + wArr(headIdx)
+                        
+                        ' Drops points from the sum if they fall behind your rolling window
+                        Do While (tArr(headIdx) - tArr(tailIdx) > avgWindow) And (tailIdx <= headIdx)
+                            rollingSum = rollingSum - wArr(tailIdx)
+                            tailIdx = tailIdx + 1
+                        Loop
+                        
+                        rollingCount = headIdx - tailIdx + 1
+                        
+                        outData(headIdx, 1) = tArr(headIdx)
+                        If rollingCount > 0 Then
+                            outData(headIdx, 2) = rollingSum / rollingCount
+                        Else
+                            outData(headIdx, 2) = wArr(headIdx)
                         End If
-                        sumW = sumW + wArr(i)
-                        countW = countW + 1
-                    Next i
+                    Next headIdx
                     
-                    If countW > 0 Then
-                        pIdx = pIdx + 1
-                        outData(pIdx, 1) = binStart + avgWindow
-                        outData(pIdx, 2) = sumW / countW
-                    End If
-                    
-                    wsDat.Cells(1, outCol).Value = dName & " Time"
-                    wsDat.Cells(1, outCol + 1).Value = dName & " lbf"
-                    wsDat.Cells(2, outCol).Resize(pIdx, 2).Value = outData
-                    
-                    ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(pIdx + 1, outCol))
-                    ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(pIdx + 1, outCol + 1))
-                    outCol = outCol + 2
                 Else
-                    wsDat.Cells(1, outCol).Value = dName & " Time"
-                    wsDat.Cells(1, outCol + 1).Value = dName & " lbf"
-                    Dim rawOut() As Variant
-                    ReDim rawOut(1 To matchCount, 1 To 2)
                     For i = 1 To matchCount
-                        rawOut(i, 1) = tArr(i)
-                        rawOut(i, 2) = wArr(i)
+                        outData(i, 1) = tArr(i)
+                        outData(i, 2) = wArr(i)
                     Next i
-                    wsDat.Cells(2, outCol).Resize(matchCount, 2).Value = rawOut
-                    
-                    ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(matchCount + 1, outCol))
-                    ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(matchCount + 1, outCol + 1))
-                    outCol = outCol + 2
                 End If
+                
+                wsDat.Cells(1, outCol).Value = dName & " Time"
+                wsDat.Cells(1, outCol + 1).Value = dName & " lbf"
+                wsDat.Cells(2, outCol).Resize(matchCount, 2).Value = outData
+                
+                ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(matchCount + 1, outCol))
+                ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(matchCount + 1, outCol + 1))
+                outCol = outCol + 2
                 
                 ser.ChartType = xlXYScatter
                 ser.MarkerStyle = xlMarkerStyleCircle
