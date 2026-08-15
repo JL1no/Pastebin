@@ -25,6 +25,7 @@ Sub ProcessTest()
     Dim totalPossibleRows As Long, splitArr() As String
     Dim apparentFreq As Double
     Dim btn As Object
+    Dim tsVal As Variant
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -106,7 +107,7 @@ Sub ProcessTest()
     ReDim bStartRows(1 To blockCount)
 
     For b = 1 To blockCount
-        srcData = wsSource.Range(wsSource.Cells(dataStartRow, blockStartCols(b)), wsSource.Cells(lastRow, blockStartCols(b) + 1)).Value
+        srcData = wsSource.Range(wsSource.Cells(dataStartRow, blockStartCols(b)), wsSource.Cells(lastRow, blockStartCols(b) + 1)).Value2
         nRows = UBound(srcData, 1)
         ReDim timeArr(1 To nRows)
         ReDim weightArr(1 To nRows)
@@ -114,22 +115,29 @@ Sub ProcessTest()
         bStartRows(b) = outRow
 
         For i = 1 To nRows
-            tsText = Trim(CStr(srcData(i, 1)))
+            tsVal = srcData(i, 1)
+            If IsEmpty(tsVal) Or IsError(tsVal) Then Exit For
+            
+            tsText = Trim(CStr(tsVal))
             If tsText = "" Then Exit For
             wVal = srcData(i, 2)
 
-            If InStr(tsText, ":") > 0 Then
+            If VarType(tsVal) = vbString Then
                 tempTs = Replace(Replace(tsText, " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
-                splitArr = Split(tempTs, ":")
-                If UBound(splitArr) = 2 Then
-                    elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
-                ElseIf UBound(splitArr) = 1 Then
-                    elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
+                If InStr(tempTs, ":") > 0 Then
+                    splitArr = Split(tempTs, ":")
+                    If UBound(splitArr) = 2 Then
+                        elapsedSec = CDbl(splitArr(0)) * 3600 + CDbl(splitArr(1)) * 60 + CDbl(splitArr(2))
+                    ElseIf UBound(splitArr) = 1 Then
+                        elapsedSec = CDbl(splitArr(0)) * 60 + CDbl(splitArr(1))
+                    Else
+                        elapsedSec = CDbl(tempTs)
+                    End If
                 Else
                     elapsedSec = CDbl(tempTs)
                 End If
             Else
-                elapsedSec = CDbl(tsText)
+                elapsedSec = CDbl(tsVal)
             End If
 
             rowIdx = rowIdx + 1
@@ -256,9 +264,6 @@ CleanExit:
 End Sub
 
 
-' ====================================================================
-' INTERACTIVE MACRO: Runs when you click "Update Charts"
-' ====================================================================
 Sub UpdateAverages()
     On Error GoTo PlottingError
 
@@ -267,25 +272,22 @@ Sub UpdateAverages()
     
     If InStr(wsSum.Name, " - Summary") = 0 Then Exit Sub
     
-    On Error Resume Next
     Set wsDat = ThisWorkbook.Sheets(Replace(wsSum.Name, " - Summary", " - Data"))
-    On Error GoTo PlottingError
     If wsDat Is Nothing Then Exit Sub
     
     Dim avgWindow As Double
     avgWindow = Val(wsSum.Range("B2").Value)
     
     Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
     
-    wsDat.Range("G:Z").ClearContents
+    wsDat.Range("G:XFD").ClearContents
     
     Dim lastR As Long
     lastR = wsDat.Cells(wsDat.Rows.Count, 1).End(xlUp).Row
     If lastR < 2 Then GoTo SafeExit
     
     Dim rawData As Variant
-    rawData = wsDat.Range("A1:E" & lastR).Value
+    rawData = wsDat.Range("A1:E" & lastR).Value2
     
     Dim chrtObj As ChartObject, ser As Series
     Dim tName As String, testNum As String, dName As String
@@ -294,7 +296,7 @@ Sub UpdateAverages()
     
     For Each chrtObj In wsSum.ChartObjects
         tName = chrtObj.Chart.ChartTitle.Text
-        testNum = Split(tName, " ")(1)
+        testNum = Trim(Split(tName, " ")(1))
         chrtObj.Chart.ChartTitle.Text = "Test " & testNum & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
         
         Do While chrtObj.Chart.SeriesCollection.Count > 0
@@ -306,7 +308,7 @@ Sub UpdateAverages()
         Dim i As Long
         On Error Resume Next
         For i = 2 To lastR
-            If CStr(rawData(i, 2)) = testNum Then
+            If Trim(CStr(rawData(i, 2))) = testNum Then
                 uDevs.Add CStr(rawData(i, 1)), CStr(rawData(i, 1))
             End If
         Next i
@@ -319,7 +321,7 @@ Sub UpdateAverages()
             Dim matchCount As Long
             matchCount = 0
             For i = 2 To lastR
-                If CStr(rawData(i, 2)) = testNum And CStr(rawData(i, 1)) = dName Then
+                If Trim(CStr(rawData(i, 2))) = testNum And CStr(rawData(i, 1)) = dName Then
                     matchCount = matchCount + 1
                 End If
             Next i
@@ -332,7 +334,7 @@ Sub UpdateAverages()
                 idx = 0
                 
                 For i = 2 To lastR
-                    If CStr(rawData(i, 2)) = testNum And CStr(rawData(i, 1)) = dName Then
+                    If Trim(CStr(rawData(i, 2))) = testNum And CStr(rawData(i, 1)) = dName Then
                         idx = idx + 1
                         tArr(idx) = CDbl(rawData(i, 4))
                         wArr(idx) = CDbl(rawData(i, 5))
@@ -340,7 +342,6 @@ Sub UpdateAverages()
                 Next i
                 
                 Set ser = chrtObj.Chart.SeriesCollection.NewSeries
-                ser.ChartType = xlXYScatter ' Explicitly set this FIRST to avoid formatting bugs
                 ser.Name = dName
                 
                 If avgWindow > 0 Then
@@ -349,13 +350,14 @@ Sub UpdateAverages()
                     Dim pIdx As Long, countW As Long, sumW As Double
                     Dim binStart As Double
                     pIdx = 0: countW = 0: sumW = 0
+                    
                     binStart = Int(tArr(1) / avgWindow) * avgWindow
                     
                     For i = 1 To matchCount
                         If tArr(i) >= binStart + avgWindow Then
                             If countW > 0 Then
                                 pIdx = pIdx + 1
-                                outData(pIdx, 1) = binStart + (avgWindow / 2)
+                                outData(pIdx, 1) = binStart + avgWindow
                                 outData(pIdx, 2) = sumW / countW
                             End If
                             binStart = Int(tArr(i) / avgWindow) * avgWindow
@@ -368,7 +370,7 @@ Sub UpdateAverages()
                     
                     If countW > 0 Then
                         pIdx = pIdx + 1
-                        outData(pIdx, 1) = binStart + (avgWindow / 2)
+                        outData(pIdx, 1) = binStart + avgWindow
                         outData(pIdx, 2) = sumW / countW
                     End If
                     
@@ -395,6 +397,7 @@ Sub UpdateAverages()
                     outCol = outCol + 2
                 End If
                 
+                ser.ChartType = xlXYScatter
                 ser.MarkerStyle = xlMarkerStyleCircle
                 ser.MarkerSize = 4
             End If
@@ -402,12 +405,10 @@ Sub UpdateAverages()
     Next chrtObj
     
 SafeExit:
-    Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Exit Sub
     
 PlottingError:
-    Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "An error occurred while building the charts." & vbCrLf & "Error Code: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical, "Chart Builder Failed"
 End Sub
