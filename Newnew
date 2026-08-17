@@ -1,5 +1,3 @@
-
-
 Sub ProcessTest()
 
     Const ConfigSourceSheetName As String = ""
@@ -15,7 +13,6 @@ Sub ProcessTest()
     Dim sumHeaderRow As Long, sumRow As Long
     Dim nRows As Long, rowIdx As Long
     Dim bMaxWeight() As Double
-    Dim timeArr() As Double, weightArr() As Double
     Dim distinctTests() As String, distinctCount As Long
     Dim found As Boolean
     Dim chtObj As ChartObject
@@ -51,7 +48,7 @@ Sub ProcessTest()
         End If
     Next r
     If headerRow = 0 Then
-        MsgBox "Could not find a 'Timestamp' header row in the first 30 rows of """ & wsSource.Name & """.", vbExclamation
+        MsgBox "Could not find a 'Timestamp' header row.", vbExclamation
         GoTo CleanExit
     End If
     dataStartRow = headerRow + 1
@@ -79,10 +76,7 @@ Sub ProcessTest()
         End If
     Loop
 
-    If blockCount = 0 Then
-        MsgBox "No 'Device & Test:' blocks found in row 1 of """ & wsSource.Name & """.", vbExclamation
-        GoTo CleanExit
-    End If
+    If blockCount = 0 Then GoTo CleanExit
 
     lastRow = wsSource.Cells(wsSource.Rows.Count, blockStartCols(1)).End(xlUp).Row
     summaryName = Left(wsSource.Name & " - Summary", 31)
@@ -101,17 +95,16 @@ Sub ProcessTest()
     wsData.Name = dataName
 
     ReDim bMaxWeight(1 To blockCount)
-    
     Dim outCol As Long
     
     For b = 1 To blockCount
+        Application.StatusBar = "Loading raw data: Sensor " & b & " of " & blockCount & "..."
+        
         srcData = wsSource.Range(wsSource.Cells(dataStartRow, blockStartCols(b)), wsSource.Cells(lastRow, blockStartCols(b) + 1)).Value2
         nRows = UBound(srcData, 1)
         
         Dim blockOut() As Variant
         ReDim blockOut(1 To nRows, 1 To 2)
-        ReDim timeArr(1 To nRows)
-        ReDim weightArr(1 To nRows)
         rowIdx = 0
         
         isFirst = True
@@ -121,14 +114,15 @@ Sub ProcessTest()
         For i = 1 To nRows
             tsVal = srcData(i, 1)
             If IsEmpty(tsVal) Or IsError(tsVal) Then Exit For
-            
-            tsText = Trim(CStr(tsVal))
-            If tsText = "" Then Exit For
             wVal = srcData(i, 2)
-
-            If isTimeFmt And VarType(tsVal) = vbDouble Then
-                rawSec = tsVal * 86400
+            
+            If VarType(tsVal) = vbDouble Then
+                If isTimeFmt Then rawSec = tsVal * 86400 Else rawSec = tsVal
+            ElseIf IsNumeric(tsVal) Then
+                rawSec = CDbl(tsVal)
             Else
+                tsText = Trim(CStr(tsVal))
+                If tsText = "" Then Exit For
                 tsText = Replace(Replace(tsText, " AM", "", 1, -1, vbTextCompare), " PM", "", 1, -1, vbTextCompare)
                 If InStr(tsText, ":") > 0 Then
                     splitArr = Split(tsText, ":")
@@ -151,27 +145,23 @@ Sub ProcessTest()
             
             elapsedSec = rawSec - firstTime
             rowIdx = rowIdx + 1
-            timeArr(rowIdx) = elapsedSec
-            weightArr(rowIdx) = CDbl(wVal) * 0.00220462
+            
+            wVal = CDbl(wVal) * 0.00220462
 
-            If rowIdx = 1 Or weightArr(rowIdx) > bMaxWeight(b) Then
-                bMaxWeight(b) = weightArr(rowIdx)
+            If rowIdx = 1 Or wVal > bMaxWeight(b) Then
+                bMaxWeight(b) = wVal
             End If
 
             blockOut(rowIdx, 1) = elapsedSec
-            blockOut(rowIdx, 2) = weightArr(rowIdx)
+            blockOut(rowIdx, 2) = wVal
         Next i
         
-        If rowIdx > 100 And timeArr(rowIdx) > 0 Then
-            apparentFreq = rowIdx / timeArr(rowIdx)
+        If rowIdx > 100 And blockOut(rowIdx, 1) > 0 Then
+            apparentFreq = rowIdx / blockOut(rowIdx, 1)
             If apparentFreq > 100000 Then
-                For i = 1 To rowIdx
-                    blockOut(i, 1) = blockOut(i, 1) * 86400
-                Next i
+                For i = 1 To rowIdx: blockOut(i, 1) = blockOut(i, 1) * 86400: Next i
             ElseIf apparentFreq > 1500 And apparentFreq < 100000 Then
-                For i = 1 To rowIdx
-                    blockOut(i, 1) = blockOut(i, 1) * 60
-                Next i
+                For i = 1 To rowIdx: blockOut(i, 1) = blockOut(i, 1) * 60: Next i
             End If
         End If
 
@@ -183,15 +173,15 @@ Sub ProcessTest()
         wsData.Cells(1, outCol).Resize(3, 2).Font.Bold = True
         wsData.Cells(1, outCol).Resize(3, 2).Interior.Color = RGB(220, 230, 241)
         
-        If rowIdx > 0 Then
-            wsData.Cells(4, outCol).Resize(rowIdx, 2).Value = blockOut
-        End If
+        If rowIdx > 0 Then wsData.Cells(4, outCol).Resize(rowIdx, 2).Value = blockOut
     Next b
 
     wsData.Columns.AutoFit
     wsData.Activate
     wsData.Range("A4").Select
     ActiveWindow.FreezePanes = True
+
+    Application.StatusBar = "Building Dashboard..."
 
     wsSummary.Activate
     wsSummary.Range("A1").Value = "Test Summary - " & wsSource.Name
@@ -269,6 +259,7 @@ Sub ProcessTest()
     Call UpdateAverages
 
 CleanExit:
+    Application.StatusBar = False
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
     Application.EnableEvents = True
@@ -280,7 +271,6 @@ Sub UpdateAverages()
 
     Dim wsSum As Worksheet, wsDat As Worksheet
     Set wsSum = ActiveSheet
-    
     If InStr(wsSum.Name, " - Summary") = 0 Then Exit Sub
     
     Set wsDat = ThisWorkbook.Sheets(Replace(wsSum.Name, " - Summary", " - Data"))
@@ -290,6 +280,7 @@ Sub UpdateAverages()
     avgWindow = Val(wsSum.Range("B2").Value)
     
     Application.ScreenUpdating = False
+    Application.StatusBar = "Updating mathematical filters..."
     
     Dim c As Long, smoothStartCol As Long
     c = 1
@@ -303,6 +294,9 @@ Sub UpdateAverages()
     Dim sCol As Long, bCol As Long
     Dim dName As String, tName As String
     sCol = smoothStartCol
+    
+    Dim maxPoints As Long, plotStep As Long
+    maxPoints = 3500 ' Safely limits chart render to prevent Excel crash
     
     For bCol = 1 To c - 2 Step 2
         dName = wsDat.Cells(1, bCol).Value
@@ -318,12 +312,17 @@ Sub UpdateAverages()
         Dim matchCount As Long
         matchCount = UBound(rawData, 1)
         
+        If matchCount > maxPoints Then
+            plotStep = matchCount \ maxPoints
+        Else
+            plotStep = 1
+        End If
+        
         Dim outData() As Variant
-        ReDim outData(1 To matchCount, 1 To 2)
+        ReDim outData(1 To (matchCount \ plotStep) * 2 + 5, 1 To 2)
+        Dim pIdx As Long: pIdx = 0
         
-        Dim filteredMax As Double
-        filteredMax = -999999
-        
+        Dim filteredMax As Double: filteredMax = -999999
         Dim headIdx As Long, tailIdx As Long
         Dim rollingSum As Double, rollingCount As Long, currentAvg As Double
         
@@ -340,7 +339,6 @@ Sub UpdateAverages()
                 Loop
                 
                 rollingCount = headIdx - tailIdx + 1
-                outData(headIdx, 1) = rawData(headIdx, 1)
                 
                 If rollingCount > 0 Then
                     currentAvg = rollingSum / rollingCount
@@ -348,25 +346,50 @@ Sub UpdateAverages()
                     currentAvg = rawData(headIdx, 2)
                 End If
                 
-                outData(headIdx, 2) = currentAvg
                 If currentAvg > filteredMax Then filteredMax = currentAvg
+                
+                If headIdx Mod plotStep = 0 Or headIdx = matchCount Then
+                    pIdx = pIdx + 1
+                    outData(pIdx, 1) = rawData(headIdx, 1)
+                    outData(pIdx, 2) = currentAvg
+                End If
             Next headIdx
+            
         Else
+            Dim cMax As Double, cMin As Double
+            Dim tMax As Double, tMin As Double
+            cMax = -999999: cMin = 999999
+            
             For headIdx = 1 To matchCount
-                outData(headIdx, 1) = rawData(headIdx, 1)
-                outData(headIdx, 2) = rawData(headIdx, 2)
+                If rawData(headIdx, 2) > cMax Then
+                    cMax = rawData(headIdx, 2): tMax = rawData(headIdx, 1)
+                End If
+                If rawData(headIdx, 2) < cMin Then
+                    cMin = rawData(headIdx, 2): tMin = rawData(headIdx, 1)
+                End If
                 If rawData(headIdx, 2) > filteredMax Then filteredMax = rawData(headIdx, 2)
+                
+                If headIdx Mod plotStep = 0 Or headIdx = matchCount Then
+                    If tMin <= tMax Then
+                        pIdx = pIdx + 1: outData(pIdx, 1) = tMin: outData(pIdx, 2) = cMin
+                        pIdx = pIdx + 1: outData(pIdx, 1) = tMax: outData(pIdx, 2) = cMax
+                    Else
+                        pIdx = pIdx + 1: outData(pIdx, 1) = tMax: outData(pIdx, 2) = cMax
+                        pIdx = pIdx + 1: outData(pIdx, 1) = tMin: outData(pIdx, 2) = cMin
+                    End If
+                    cMax = -999999: cMin = 999999
+                End If
             Next headIdx
         End If
         
         wsDat.Cells(1, sCol).Value = dName
         wsDat.Cells(2, sCol).Value = tName
         wsDat.Cells(3, sCol).Value = "Time (s)"
-        wsDat.Cells(3, sCol + 1).Value = "Filtered (lbf)"
+        wsDat.Cells(3, sCol + 1).Value = "Plot Output"
         wsDat.Cells(1, sCol).Resize(3, 2).Font.Bold = True
         wsDat.Cells(1, sCol).Resize(3, 2).Interior.Color = RGB(226, 239, 218)
         
-        wsDat.Cells(4, sCol).Resize(matchCount, 2).Value = outData
+        wsDat.Cells(4, sCol).Resize(pIdx, 2).Value = outData
         
         Dim sumR As Long, maxSumR As Long
         maxSumR = wsSum.Cells(wsSum.Rows.Count, 1).End(xlUp).Row
@@ -380,6 +403,8 @@ Sub UpdateAverages()
         sCol = sCol + 2
 NextBlock:
     Next bCol
+    
+    Application.StatusBar = "Rendering high-speed charts..."
     
     Dim chrtObj As ChartObject, ser As Series
     Dim chartTestName As String
@@ -415,11 +440,12 @@ NextBlock:
         Next tempSCol
     Next chrtObj
     
+    Application.StatusBar = False
     Application.ScreenUpdating = True
     Exit Sub
     
 PlottingError:
+    Application.StatusBar = False
     Application.ScreenUpdating = True
     MsgBox "An error occurred while building the charts." & vbCrLf & "Error Code: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical, "Chart Builder Failed"
 End Sub
-
