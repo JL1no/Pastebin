@@ -1,3 +1,5 @@
+
+
 Sub ProcessTest()
 
     Const ConfigSourceSheetName As String = ""
@@ -10,9 +12,9 @@ Sub ProcessTest()
     Dim blockStartCols() As Long, deviceIDs() As String, testNames() As String
     Dim rawVal As String, tsText As String
     Dim posTest As Long, wVal As Variant, elapsedSec As Double
-    Dim outRow As Long, sumHeaderRow As Long, sumRow As Long
+    Dim sumHeaderRow As Long, sumRow As Long
     Dim nRows As Long, rowIdx As Long
-    Dim bMaxWeight() As Double, bStartRows() As Long
+    Dim bMaxWeight() As Double
     Dim timeArr() As Double, weightArr() As Double
     Dim distinctTests() As String, distinctCount As Long
     Dim found As Boolean
@@ -21,13 +23,14 @@ Sub ProcessTest()
     Dim gap As Double, baseTop As Double, baseLeft As Double
     Dim colIdx As Long, rowIdxGrid As Long
     Dim dataName As String, summaryName As String
-    Dim srcData As Variant, masterData() As Variant
-    Dim totalPossibleRows As Long, splitArr() As String
+    Dim srcData As Variant
+    Dim splitArr() As String
     Dim btn As Object
     
     Dim tsVal As Variant
     Dim firstFmt As String, isTimeFmt As Boolean
     Dim firstTime As Double, isFirst As Boolean, rawSec As Double
+    Dim apparentFreq As Double
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -97,24 +100,19 @@ Sub ProcessTest()
     Set wsData = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
     wsData.Name = dataName
 
-    wsData.Range("A1:E1").Value = Array("Legend Name", "Chart Name", "Timestamp", "Elapsed Seconds", "Weight (lbf)")
-    wsData.Range("A1:E1").Font.Bold = True
-    wsData.Range("A1:E1").Interior.Color = RGB(220, 230, 241)
-
-    totalPossibleRows = blockCount * (lastRow - dataStartRow + 1)
-    ReDim masterData(1 To totalPossibleRows, 1 To 5)
-    outRow = 2
-
     ReDim bMaxWeight(1 To blockCount)
-    ReDim bStartRows(1 To blockCount)
-
+    
+    Dim outCol As Long
+    
     For b = 1 To blockCount
         srcData = wsSource.Range(wsSource.Cells(dataStartRow, blockStartCols(b)), wsSource.Cells(lastRow, blockStartCols(b) + 1)).Value2
         nRows = UBound(srcData, 1)
+        
+        Dim blockOut() As Variant
+        ReDim blockOut(1 To nRows, 1 To 2)
         ReDim timeArr(1 To nRows)
         ReDim weightArr(1 To nRows)
         rowIdx = 0
-        bStartRows(b) = outRow
         
         isFirst = True
         firstFmt = wsSource.Cells(dataStartRow, blockStartCols(b)).NumberFormat
@@ -152,7 +150,6 @@ Sub ProcessTest()
             End If
             
             elapsedSec = rawSec - firstTime
-
             rowIdx = rowIdx + 1
             timeArr(rowIdx) = elapsedSec
             weightArr(rowIdx) = CDbl(wVal) * 0.00220462
@@ -161,23 +158,39 @@ Sub ProcessTest()
                 bMaxWeight(b) = weightArr(rowIdx)
             End If
 
-            masterData(outRow - 1, 1) = deviceIDs(b)
-            masterData(outRow - 1, 2) = testNames(b)
-            masterData(outRow - 1, 3) = tsText
-            masterData(outRow - 1, 4) = elapsedSec
-            masterData(outRow - 1, 5) = weightArr(rowIdx)
-            outRow = outRow + 1
+            blockOut(rowIdx, 1) = elapsedSec
+            blockOut(rowIdx, 2) = weightArr(rowIdx)
         Next i
+        
+        If rowIdx > 100 And timeArr(rowIdx) > 0 Then
+            apparentFreq = rowIdx / timeArr(rowIdx)
+            If apparentFreq > 100000 Then
+                For i = 1 To rowIdx
+                    blockOut(i, 1) = blockOut(i, 1) * 86400
+                Next i
+            ElseIf apparentFreq > 1500 And apparentFreq < 100000 Then
+                For i = 1 To rowIdx
+                    blockOut(i, 1) = blockOut(i, 1) * 60
+                Next i
+            End If
+        End If
+
+        outCol = (b - 1) * 2 + 1
+        wsData.Cells(1, outCol).Value = deviceIDs(b)
+        wsData.Cells(2, outCol).Value = testNames(b)
+        wsData.Cells(3, outCol).Value = "Time (s)"
+        wsData.Cells(3, outCol + 1).Value = "Raw (lbf)"
+        wsData.Cells(1, outCol).Resize(3, 2).Font.Bold = True
+        wsData.Cells(1, outCol).Resize(3, 2).Interior.Color = RGB(220, 230, 241)
+        
+        If rowIdx > 0 Then
+            wsData.Cells(4, outCol).Resize(rowIdx, 2).Value = blockOut
+        End If
     Next b
 
-    If outRow > 2 Then
-        wsData.Range("A2").Resize(outRow - 2, 5).Value = masterData
-    End If
-
-    wsData.Range("D2:D" & outRow - 1).NumberFormat = "0.000"
-    wsData.Columns("A:E").AutoFit
+    wsData.Columns.AutoFit
     wsData.Activate
-    wsData.Range("A2").Select
+    wsData.Range("A4").Select
     ActiveWindow.FreezePanes = True
 
     wsSummary.Activate
@@ -278,145 +291,130 @@ Sub UpdateAverages()
     
     Application.ScreenUpdating = False
     
-    wsDat.Range("G:XFD").ClearContents
+    Dim c As Long, smoothStartCol As Long
+    c = 1
+    Do While wsDat.Cells(1, c).Value <> "" And wsDat.Cells(3, c).Value = "Time (s)"
+        c = c + 2
+    Loop
+    smoothStartCol = c + 1
     
-    Dim lastR As Long
-    lastR = wsDat.Cells(wsDat.Rows.Count, 1).End(xlUp).Row
-    If lastR < 2 Then GoTo SafeExit
+    wsDat.Range(wsDat.Cells(1, smoothStartCol), wsDat.Cells(wsDat.Rows.Count, wsDat.Columns.Count)).ClearContents
     
-    Dim rawData As Variant
-    rawData = wsDat.Range("A1:E" & lastR).Value2
+    Dim sCol As Long, bCol As Long
+    Dim dName As String, tName As String
+    sCol = smoothStartCol
     
-    Dim chrtObj As ChartObject, ser As Series
-    Dim tName As String, testNameStr As String, dName As String
-    Dim outCol As Long
-    outCol = 7
-    
-    For Each chrtObj In wsSum.ChartObjects
-        tName = chrtObj.Chart.ChartTitle.Text
-        If InStr(tName, " (") > 0 Then
-            testNameStr = Trim(Left(tName, InStrRev(tName, " (") - 1))
+    For bCol = 1 To c - 2 Step 2
+        dName = wsDat.Cells(1, bCol).Value
+        tName = wsDat.Cells(2, bCol).Value
+        
+        Dim lastR As Long
+        lastR = wsDat.Cells(wsDat.Rows.Count, bCol).End(xlUp).Row
+        If lastR < 4 Then GoTo NextBlock
+        
+        Dim rawData As Variant
+        rawData = wsDat.Range(wsDat.Cells(4, bCol), wsDat.Cells(lastR, bCol + 1)).Value2
+        
+        Dim matchCount As Long
+        matchCount = UBound(rawData, 1)
+        
+        Dim outData() As Variant
+        ReDim outData(1 To matchCount, 1 To 2)
+        
+        Dim filteredMax As Double
+        filteredMax = -999999
+        
+        Dim headIdx As Long, tailIdx As Long
+        Dim rollingSum As Double, rollingCount As Long, currentAvg As Double
+        
+        If avgWindow > 0 Then
+            tailIdx = 1
+            rollingSum = 0
+            
+            For headIdx = 1 To matchCount
+                rollingSum = rollingSum + rawData(headIdx, 2)
+                
+                Do While (rawData(headIdx, 1) - rawData(tailIdx, 1) > avgWindow) And (tailIdx <= headIdx)
+                    rollingSum = rollingSum - rawData(tailIdx, 2)
+                    tailIdx = tailIdx + 1
+                Loop
+                
+                rollingCount = headIdx - tailIdx + 1
+                outData(headIdx, 1) = rawData(headIdx, 1)
+                
+                If rollingCount > 0 Then
+                    currentAvg = rollingSum / rollingCount
+                Else
+                    currentAvg = rawData(headIdx, 2)
+                End If
+                
+                outData(headIdx, 2) = currentAvg
+                If currentAvg > filteredMax Then filteredMax = currentAvg
+            Next headIdx
         Else
-            testNameStr = Trim(tName)
+            For headIdx = 1 To matchCount
+                outData(headIdx, 1) = rawData(headIdx, 1)
+                outData(headIdx, 2) = rawData(headIdx, 2)
+                If rawData(headIdx, 2) > filteredMax Then filteredMax = rawData(headIdx, 2)
+            Next headIdx
         End If
         
-        chrtObj.Chart.ChartTitle.Text = testNameStr & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
+        wsDat.Cells(1, sCol).Value = dName
+        wsDat.Cells(2, sCol).Value = tName
+        wsDat.Cells(3, sCol).Value = "Time (s)"
+        wsDat.Cells(3, sCol + 1).Value = "Filtered (lbf)"
+        wsDat.Cells(1, sCol).Resize(3, 2).Font.Bold = True
+        wsDat.Cells(1, sCol).Resize(3, 2).Interior.Color = RGB(226, 239, 218)
+        
+        wsDat.Cells(4, sCol).Resize(matchCount, 2).Value = outData
+        
+        Dim sumR As Long, maxSumR As Long
+        maxSumR = wsSum.Cells(wsSum.Rows.Count, 1).End(xlUp).Row
+        For sumR = 5 To maxSumR
+            If wsSum.Cells(sumR, 1).Value = dName And wsSum.Cells(sumR, 2).Value = tName Then
+                wsSum.Cells(sumR, 4).Value = filteredMax
+                Exit For
+            End If
+        Next sumR
+        
+        sCol = sCol + 2
+NextBlock:
+    Next bCol
+    
+    Dim chrtObj As ChartObject, ser As Series
+    Dim chartTestName As String
+    
+    For Each chrtObj In wsSum.ChartObjects
+        chartTestName = chrtObj.Chart.ChartTitle.Text
+        If InStr(chartTestName, " (") > 0 Then
+            chartTestName = Trim(Left(chartTestName, InStrRev(chartTestName, " (") - 1))
+        End If
+        chrtObj.Chart.ChartTitle.Text = chartTestName & IIf(avgWindow > 0, " (" & avgWindow & "s Avg)", " (Raw)")
         
         Do While chrtObj.Chart.SeriesCollection.Count > 0
             chrtObj.Chart.SeriesCollection(1).Delete
         Loop
         
-        Dim uDevs As Collection
-        Set uDevs = New Collection
-        Dim i As Long
-        On Error Resume Next
-        For i = 2 To lastR
-            If Trim(CStr(rawData(i, 2))) = testNameStr Then
-                uDevs.Add CStr(rawData(i, 1)), CStr(rawData(i, 1))
-            End If
-        Next i
-        On Error GoTo PlottingError
-        
-        Dim devKey As Variant
-        For Each devKey In uDevs
-            dName = CStr(devKey)
-            
-            Dim matchCount As Long
-            matchCount = 0
-            For i = 2 To lastR
-                If Trim(CStr(rawData(i, 2))) = testNameStr And CStr(rawData(i, 1)) = dName Then
-                    matchCount = matchCount + 1
+        Dim tempSCol As Long
+        For tempSCol = smoothStartCol To sCol - 2 Step 2
+            If wsDat.Cells(2, tempSCol).Value = chartTestName Then
+                dName = wsDat.Cells(1, tempSCol).Value
+                Dim pCount As Long
+                pCount = wsDat.Cells(wsDat.Rows.Count, tempSCol).End(xlUp).Row - 3
+                
+                If pCount > 0 Then
+                    Set ser = chrtObj.Chart.SeriesCollection.NewSeries
+                    ser.Name = dName
+                    ser.XValues = wsDat.Range(wsDat.Cells(4, tempSCol), wsDat.Cells(3 + pCount, tempSCol))
+                    ser.Values = wsDat.Range(wsDat.Cells(4, tempSCol + 1), wsDat.Cells(3 + pCount, tempSCol + 1))
+                    ser.ChartType = xlXYScatter
+                    ser.MarkerStyle = xlMarkerStyleCircle
+                    ser.MarkerSize = 4
                 End If
-            Next i
-            
-            If matchCount > 0 Then
-                Dim tArr() As Double, wArr() As Double
-                ReDim tArr(1 To matchCount)
-                ReDim wArr(1 To matchCount)
-                Dim idx As Long
-                idx = 0
-                
-                For i = 2 To lastR
-                    If Trim(CStr(rawData(i, 2))) = testNameStr And CStr(rawData(i, 1)) = dName Then
-                        idx = idx + 1
-                        tArr(idx) = CDbl(rawData(i, 4))
-                        wArr(idx) = CDbl(rawData(i, 5))
-                    End If
-                Next i
-                
-                Set ser = chrtObj.Chart.SeriesCollection.NewSeries
-                ser.Name = dName
-                
-                Dim outData() As Variant
-                ReDim outData(1 To matchCount, 1 To 2)
-                
-                Dim filteredMax As Double
-                filteredMax = -999999
-                
-                If avgWindow > 0 Then
-                    Dim headIdx As Long, tailIdx As Long
-                    Dim rollingSum As Double
-                    Dim rollingCount As Long
-                    Dim currentAvg As Double
-                    
-                    tailIdx = 1
-                    rollingSum = 0
-                    
-                    For headIdx = 1 To matchCount
-                        rollingSum = rollingSum + wArr(headIdx)
-                        
-                        Do While (tArr(headIdx) - tArr(tailIdx) > avgWindow) And (tailIdx <= headIdx)
-                            rollingSum = rollingSum - wArr(tailIdx)
-                            tailIdx = tailIdx + 1
-                        Loop
-                        
-                        rollingCount = headIdx - tailIdx + 1
-                        
-                        outData(headIdx, 1) = tArr(headIdx)
-                        If rollingCount > 0 Then
-                            currentAvg = rollingSum / rollingCount
-                        Else
-                            currentAvg = wArr(headIdx)
-                        End If
-                        
-                        outData(headIdx, 2) = currentAvg
-                        If currentAvg > filteredMax Then filteredMax = currentAvg
-                    Next headIdx
-                    
-                Else
-                    For i = 1 To matchCount
-                        outData(i, 1) = tArr(i)
-                        outData(i, 2) = wArr(i)
-                        If wArr(i) > filteredMax Then filteredMax = wArr(i)
-                    Next i
-                End If
-                
-                wsDat.Cells(1, outCol).Value = dName & " Time"
-                wsDat.Cells(1, outCol + 1).Value = dName & " lbf"
-                wsDat.Cells(2, outCol).Resize(matchCount, 2).Value = outData
-                
-                ser.XValues = wsDat.Range(wsDat.Cells(2, outCol), wsDat.Cells(matchCount + 1, outCol))
-                ser.Values = wsDat.Range(wsDat.Cells(2, outCol + 1), wsDat.Cells(matchCount + 1, outCol + 1))
-                outCol = outCol + 2
-                
-                ser.ChartType = xlXYScatter
-                ser.MarkerStyle = xlMarkerStyleCircle
-                ser.MarkerSize = 4
-                
-                Dim sumR As Long, maxSumR As Long
-                maxSumR = wsSum.Cells(wsSum.Rows.Count, 1).End(xlUp).Row
-                For sumR = 5 To maxSumR
-                    If wsSum.Cells(sumR, 1).Value = dName And wsSum.Cells(sumR, 2).Value = testNameStr Then
-                        wsSum.Cells(sumR, 4).Value = filteredMax
-                        Exit For
-                    End If
-                Next sumR
-                
             End If
-        Next devKey
+        Next tempSCol
     Next chrtObj
     
-SafeExit:
     Application.ScreenUpdating = True
     Exit Sub
     
@@ -424,3 +422,4 @@ PlottingError:
     Application.ScreenUpdating = True
     MsgBox "An error occurred while building the charts." & vbCrLf & "Error Code: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical, "Chart Builder Failed"
 End Sub
+
